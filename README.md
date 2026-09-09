@@ -38,42 +38,72 @@ correct winners in a row without reusing a team."
 
 1. Needs Python 3 with `numpy`, `scipy`, `pandas`, `pyarrow`, `requests`
    (`pip install numpy scipy pandas pyarrow requests`).
-2. No API key needed for Phase 1 - nflverse's schedule and play-by-play
-   data are both free, public, no signup.
-3. Phase 2 (not built yet) will add The Odds API as a secondary cross-check
-   - copy `config.example.json` to `config.json` and add `odds_api_key`
-   (same key as MLB Edge - Odds API keys aren't project-scoped), or set
-   `ODDS_API_KEY` in the environment. A weather API key for Phase 2's
-   outdoor-game weather check hasn't been decided/provided yet.
+2. No API key needed for schedule/play-by-play/weather/injuries - all four
+   are free, public, no signup (see "Data sources" below for the specifics
+   and the one header-quirk workaround injuries.py needs).
+3. The Odds API cross-check is optional - copy `config.example.json` to
+   `config.json` and add `odds_api_key` (same key as MLB Edge works fine;
+   Odds API keys are account-scoped, not project-scoped - just note both
+   projects then share one subscription's request quota), or set
+   `ODDS_API_KEY` in the environment. Runs fine with no key configured at
+   all; the cross-check just silently skips itself.
 
 ## Running it
 
 ```
-python run_baseline.py
+python run_baseline.py     # Phase 1: from-scratch full-season plan (top + alternates)
+python run_weekly.py       # Phase 2: re-optimize remaining weeks with fresh data
+python run_weekly.py --lock KC   # commit KC as this week's actual pick, log it, re-run
 ```
-Writes `plan.json` (structured plan data) and `dashboard.html` (open in a
-browser). Also prints the top plan to the console.
+Both write `plan.json` (structured plan data) and `dashboard.html` (open in
+a browser); `run_weekly.py` also prints the current week's recommendation
+with its risk flags and reasoning front and center.
 
 ```
 python nfl_data.py      # just the data pipeline, sanity-checks schedule/byes/pbp fetch
 python ratings.py       # just the rating model, prints the fitted coefficients + team rankings
-python optimizer.py     # just the optimizer, prints top 5 plans
+python optimizer.py     # just the optimizer, prints top 5 plans (Phase 1 ratings only)
+python weather.py       # just this week's outdoor-game forecasts
+python injuries.py      # just this week's starting-QB injury flags
+python odds_data.py     # just the odds cross-check (prints "skipped" with no key configured)
 ```
+
+## Data sources
+
+| Source | What it's for | Key needed? |
+|---|---|---|
+| `raw.githubusercontent.com/nflverse/nfldata` | Schedule, byes, rest days, div games | No |
+| `github.com/nflverse/nflverse-data` (pbp releases) | Play-by-play for the rating model | No |
+| `api.weather.gov` (NWS) | Forecast for this week's outdoor US games | No - just a descriptive User-Agent header |
+| `site.api.espn.com` (unofficial) | League-wide injury reports, incl. starting QB status | No, but requires a `curl`-like User-Agent - see `injuries.py`'s header comment, ESPN's WAF blocks generic script/library User-Agents on this public endpoint |
+| The Odds API | Secondary market cross-check only | Yes, optional (see Setup) |
 
 ## Current status
 
 **Phase 1 (baseline full-season plan): done.** Ingestion, rating model, and
 season optimizer all run end to end against real live data.
 
-**Phase 2 (weekly re-optimization) and Phase 3 (historical calibration,
-trap-game detection): not built yet.** Phase 2 needs decisions on exactly
-which injury-report and weather sources to use and, for weather, an API key
-that hasn't been provided - see the project's open questions before
-building it. Phase 2 will also add: updated in-season ratings (not just the
-preseason prior used today), the odds-API cross-check, a `run_weekly.py`
-that locks only the current week's pick and re-solves everything after it,
-and `picks_log.jsonl` for tracking actual picks made and their results
-(same pattern as MLB Edge's `predictions_log.jsonl`).
+**Phase 2 (weekly re-optimization): done.** `run_weekly.py` re-solves the
+remaining season each run with: in-season-updated ratings
+(`ratings.build_inseason_ratings` - blends the preseason prior with this
+season's own play-by-play, weighted by how much of the season has been
+played), a starting-QB injury check applied as an actual probability
+haircut (checked against every remaining week's scheduled starter, not
+just the current week), the odds-API cross-check, and rest/short-week/
+international/divisional/bye-adjacent flags. `picks_log.jsonl` (not created
+until the first real `--lock`) tracks what was actually picked and its
+eventual result.
+
+**Design choice, stated plainly:** only the starting-QB check moves the
+model's actual win probabilities. Rest/travel/weather/divisional-volatility
+are surfaced as flags on the reasoning, not silently folded into the
+number - see `risk.py`'s module docstring for why (turning those into a
+precise multiplier without backtested evidence would be fabricated
+precision). Whether any of them deserve a quantified adjustment is exactly
+what Phase 3 is for.
+
+**Phase 3 (historical calibration, trap-game/letdown/lookahead detection):
+not built yet.**
 
 ## Design notes / things deliberately not done yet
 

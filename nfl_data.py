@@ -19,6 +19,24 @@ import os
 import pandas as pd
 import requests
 
+# The Odds API identifies teams by full name; nflverse/the schedule use
+# abbreviations. This is the join key between the two (see
+# odds_data.match_event_to_teams). Verified against the 2026 schedule's own
+# 32 home_team abbreviations.
+TEAM_FULL_NAMES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs", "LA": "Los Angeles Rams", "LAC": "Los Angeles Chargers",
+    "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+    "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
+}
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SCHEDULE_URL = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv"
 PBP_URL_TMPL = "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet"

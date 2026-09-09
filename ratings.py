@@ -136,6 +136,51 @@ def build_preseason_ratings(pbp_df, season_df):
     return shrunk, b0, b1
 
 
+def build_inseason_ratings(schedule_df, current_season, nfl_data_mod):
+    """
+    Phase 2: ratings that actually update from the current season's own
+    results, not just last season's preseason prior. Blends the shrunk
+    preseason prior with a composite computed from this season's own
+    play-by-play so far, weighted by how much of the season has been
+    played - 0% current-season weight before Week 1 kicks off (identical
+    to build_preseason_ratings), ramping to fully trusting current-season
+    data once teams have played ~6 games each (a documented starting
+    assumption - the point at which a single season's sample starts
+    meaningfully outweighing last year's, not a fitted value). Falls back
+    cleanly to the pure preseason prior if no games are final yet, or if
+    nflverse hasn't published a current-season pbp file yet (both true
+    before Week 1).
+
+    `nfl_data_mod` is passed in (rather than imported here) to avoid a
+    circular import - ratings.py is also usable standalone.
+    """
+    prior_season = current_season - 1
+    pbp_prior = nfl_data_mod.fetch_pbp(prior_season)
+    schedule_prior = nfl_data_mod.season_schedule(schedule_df, prior_season)
+    prior_raw = composite_ratings(pbp_prior)
+    b0, b1 = fit_logistic(prior_raw, schedule_prior)
+    prior_shrunk = shrink_toward_mean(prior_raw)
+
+    current_reg = nfl_data_mod.season_schedule(schedule_df, current_season)
+    played = current_reg[current_reg["home_score"].notna()]
+    if played.empty:
+        return prior_shrunk, b0, b1, 0.0  # pure preseason - no current-season games final yet
+
+    try:
+        pbp_current = nfl_data_mod.fetch_pbp(current_season, force_refresh=True)
+    except Exception:
+        return prior_shrunk, b0, b1, 0.0  # nflverse hasn't published this season's pbp file yet
+
+    avg_games_per_team = 2 * len(played) / 32.0
+    weight_current = min(1.0, avg_games_per_team / 6.0)
+
+    current_raw = composite_ratings(pbp_current)
+    blended = weight_current * current_raw.reindex(prior_shrunk.index) + (1 - weight_current) * prior_shrunk
+    blended = blended.fillna(prior_shrunk)  # teams with zero current-season plays so far (bye, etc.) keep the prior
+    blended.name = "composite"
+    return blended, b0, b1, weight_current
+
+
 if __name__ == "__main__":
     import nfl_data
 

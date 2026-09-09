@@ -35,6 +35,9 @@ tr:last-child td { border-bottom: none; }
 .ratings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; font-size: 13px; }
 .ratings-grid div { padding: 4px 8px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
 .note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.reasoning { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.flag { display: inline-block; background: #7c2d12; color: #fed7aa; font-size: 11px; padding: 1px 6px; border-radius: 4px; margin: 2px 4px 0 0; }
+.locked-badge { background: var(--accent); color: #06210e; font-weight: 700; padding: 1px 8px; border-radius: 4px; font-size: 11px; margin-left: 6px; }
 """
 
 
@@ -50,11 +53,18 @@ def _pick_row(wk, d):
     p = d["win_prob"]
     loc = "vs" if d["is_home"] else "@"
     div_tag = '<span class="tag tag-div">DIV</span>' if d["div_game"] else ""
+    locked_tag = '<span class="locked-badge">LOCKED</span>' if d.get("locked") else ""
     bar_width = int(p * 100)
+    flags_html = "".join(f'<span class="flag">{f}</span>' for f in d.get("flags") or [])
+    reasoning_html = f'<div class="reasoning">{d["reasoning"]}</div>' if d.get("reasoning") else ""
     return f"""
     <tr>
       <td>Week {wk}</td>
-      <td><b>{d['team']}</b> {loc} {d['opponent']}{div_tag}</td>
+      <td>
+        <b>{d['team']}</b> {loc} {d['opponent']}{div_tag}{locked_tag}
+        {reasoning_html}
+        {flags_html}
+      </td>
       <td>
         <div class="prob-cell">
           <span class="prob-bar" style="width:{bar_width}px; background:{_prob_color(p)};"></span>
@@ -116,7 +126,9 @@ def render(result, out_path=None):
 <style>{CSS}</style></head><body>
 <h1>NFL Survivor Pool - Season {result['plan_season']} Plan</h1>
 <div class="meta">
-  Generated {result['generated_at']} &middot; ratings built from {result['rating_season']} season play-by-play
+  Generated {result['generated_at']}
+  {f" &middot; ratings built from {result['rating_season']} season play-by-play" if 'rating_season' in result else ""}
+  {f" &middot; current-season weight in ratings: {result['inseason_weight']:.0%}" if 'inseason_weight' in result else ""}
   &middot; home-field edge (fitted): {result['home_field_logodds']:.3f} log-odds
   &middot; current week: {result['plan_week']}
 </div>
@@ -127,7 +139,7 @@ def render(result, out_path=None):
 <h2>Alternate Plans ({len(plans) - 1})</h2>
 {alt_html}
 
-<h2>Team Ratings ({result['rating_season']} EPA/success, regressed toward mean)</h2>
+<h2>Team Ratings ({result.get('rating_season', 'prior season + in-season')} EPA/success, regressed toward mean)</h2>
 <div class="panel"><div class="ratings-grid">{ratings_html}</div></div>
 
 <h2>Bye Weeks</h2>
