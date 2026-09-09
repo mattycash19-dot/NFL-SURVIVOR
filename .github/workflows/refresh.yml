@@ -1,0 +1,83 @@
+name: Refresh NFL Survivor Dashboard
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'   # every 6 hours - injury/weather/odds data doesn't need MLB Edge's 30-min cadence
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  # Two-job split (build vs. deploy), same lesson learned the hard way on
+  # MLB Edge: a single stuck github-pages deployment can hold that
+  # environment's concurrency lock for weeks (see MLB-EDGE's refresh.yml
+  # for the full incident writeup), silently blocking every run behind it.
+  # Splitting means a hung deploy can only ever block future *deploys*,
+  # never this job's own work. This repo has no cross-run durable state to
+  # commit back (unlike MLB Edge's predictions_log.jsonl - every run here
+  # re-fetches everything fresh via nfl_data.fetch_schedule(force_refresh=True)),
+  # so there's nothing to lose either way, but the pattern costs nothing and
+  # keeps both repos consistent.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build this week's plan
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python run_weekly.py
+        # Deliberately never passes --lock: making the actual pick is a
+        # manual, human step by design (see README) - CI only ever
+        # regenerates the recommendation, never commits one.
+
+      - name: Upload dashboard for deploy job
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-html
+          path: dashboard.html
+          retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download dashboard from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard-html
+          path: _site_src
+
+      - name: Prepare Pages output
+        run: |
+          mkdir -p _site
+          cp _site_src/dashboard.html _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
