@@ -49,6 +49,35 @@ EPA_WEIGHT = 0.7
 SUCCESS_WEIGHT = 0.3
 PRESEASON_SHRINKAGE = 0.72  # fraction of last season's rating gap from the mean that carries over
 
+# Phase 3 finding (calibration.py, 2026-09-09): fit_logistic() below fits
+# b0/b1 against the SAME season the ratings are computed from, which
+# systematically overstates the rating-to-win-probability relationship - a
+# team's own EPA numbers in a season are partly a consequence of that
+# season's own wins (winning teams see more favorable game states,
+# garbage-time effects on the losing side, etc.), so the in-sample fit
+# doesn't transfer to predicting a DIFFERENT season. Checked against real
+# held-out seasons (2019-2025), the in-sample fit was badly overconfident -
+# predicted 80%+ buckets actually won only ~65-67% of the time. These two
+# constants instead come from calibration.fit_out_of_sample_logistic(),
+# pooling (shrunk prior-season rating gap, actual NEXT-season outcome)
+# pairs across every available season transition (2010->2011 through
+# 2024->2025, n=3601 games) - genuinely out-of-sample by construction.
+# Held-out validation (fit on 2010-2017, tested on 2019-2025, kept
+# separate from the production fit below): Brier 0.2408 -> 0.2388, and the
+# worst overconfidence band (80-90% predicted, ~65% actual) closed up
+# substantially. Still an honest, real limitation worth stating plainly:
+# even properly calibrated, a pure preseason EPA-only rating has limited
+# power to predict a DIFFERENT season on its own (Brier ~0.239 vs. the
+# market's 0.211 over the same kind of test - see calibration.py) -
+# rosters change materially year over year in ways last season's play-by-
+# play alone can't see. Trust these preseason/Week-1 numbers with real
+# skepticism; build_inseason_ratings() should get better as current-season
+# data comes in and starts dominating the blend. Re-run
+# calibration.fit_out_of_sample_logistic() periodically as more seasons of
+# history accumulate rather than treating these as permanent.
+FITTED_B0 = 0.2203
+FITTED_B1 = 0.4589
+
 
 def team_epa_success(pbp_df):
     """Per-team offense/defense EPA-per-play and success rate, REG season,
@@ -98,6 +127,20 @@ def fit_logistic(composite, season_df):
 
     diff = (composite.loc[reg["home_team"]].values - composite.loc[reg["away_team"]].values)
     y = reg["home_win"].values
+    return fit_logistic_on_diffs(diff, y)
+
+
+def fit_logistic_on_diffs(diff, y):
+    """
+    The actual MLE fit, split out from fit_logistic() so calibration.py can
+    fit b0/b1 on a genuinely out-of-sample pool of (rating gap, outcome)
+    pairs - see calibration.py's module docstring for why the in-sample
+    version (fit_logistic() above, rating and outcome both from the same
+    season) turned out to systematically overstate b1 and produce
+    overconfident predictions once checked against real held-out seasons.
+    """
+    diff = np.asarray(diff)
+    y = np.asarray(y)
 
     def neg_log_likelihood(params):
         b0, b1 = params
@@ -124,16 +167,19 @@ def win_probability(home_composite, away_composite, b0, b1):
     return 1.0 / (1.0 + np.exp(-z))
 
 
-def build_preseason_ratings(pbp_df, season_df):
+def build_preseason_ratings(pbp_df, season_df=None):
     """
-    End-to-end: raw composite ratings + logistic fit from last season's real
-    data, then shrunk toward the mean for use as this season's Week 1
-    ratings. Returns (shrunk_composite: Series indexed by team, b0, b1).
+    End-to-end: raw composite ratings from last season's real data, shrunk
+    toward the mean for use as this season's Week 1 ratings, paired with
+    the historically-validated FITTED_B0/FITTED_B1 (not an in-sample fit
+    against `season_df` - see the module docstring above FITTED_B0 for why
+    that was wrong). `season_df` is accepted but unused, kept only so
+    existing callers don't need updating; pass None for new code.
+    Returns (shrunk_composite: Series indexed by team, b0, b1).
     """
     raw = composite_ratings(pbp_df)
-    b0, b1 = fit_logistic(raw, season_df)
     shrunk = shrink_toward_mean(raw)
-    return shrunk, b0, b1
+    return shrunk, FITTED_B0, FITTED_B1
 
 
 def build_inseason_ratings(schedule_df, current_season, nfl_data_mod):
@@ -156,9 +202,8 @@ def build_inseason_ratings(schedule_df, current_season, nfl_data_mod):
     """
     prior_season = current_season - 1
     pbp_prior = nfl_data_mod.fetch_pbp(prior_season)
-    schedule_prior = nfl_data_mod.season_schedule(schedule_df, prior_season)
     prior_raw = composite_ratings(pbp_prior)
-    b0, b1 = fit_logistic(prior_raw, schedule_prior)
+    b0, b1 = FITTED_B0, FITTED_B1  # see module docstring above FITTED_B0 - not an in-sample fit
     prior_shrunk = shrink_toward_mean(prior_raw)
 
     current_reg = nfl_data_mod.season_schedule(schedule_df, current_season)
@@ -191,8 +236,12 @@ if __name__ == "__main__":
 
     raw = composite_ratings(pbp)
     b0, b1 = fit_logistic(raw, season_df)
-    print(f"Logistic fit on {rating_season}: b0={b0:.4f} (home-field log-odds), b1={b1:.4f} (sensitivity to rating gap)")
-    print(f"Implied home-field win prob for two evenly-matched teams: {win_probability(0, 0, b0, b1):.1%}")
+    print(f"In-sample fit on {rating_season} (diagnostic only, NOT used for real predictions - see FITTED_B0/B1 "
+          f"above): b0={b0:.4f}, b1={b1:.4f}")
+    print(f"Actual production fit (calibration.fit_out_of_sample_logistic, validated out-of-sample): "
+          f"b0={FITTED_B0:.4f}, b1={FITTED_B1:.4f}")
+    print(f"Implied home-field win prob for two evenly-matched teams (production fit): "
+          f"{win_probability(0, 0, FITTED_B0, FITTED_B1):.1%}")
 
     shrunk = shrink_toward_mean(raw)
     ranked = shrunk.sort_values(ascending=False)

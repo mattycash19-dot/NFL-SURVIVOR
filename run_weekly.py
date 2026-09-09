@@ -45,7 +45,12 @@ def _reasoning(wk, team, opponent, is_home, div_game, win_prob, flags):
     loc = "at home vs" if is_home else "on the road at"
     base = f"{team} {loc} {opponent}, model win probability {win_prob:.1%}"
     if div_game:
-        base += " (divisional matchup - historically more volatile than the raw number suggests)"
+        # NOT flagged as extra risk - Phase 3 (trap_games.py) tested this
+        # against 16 seasons of real results and found zero evidence
+        # divisional games are more volatile or harder to predict than the
+        # market's own price implies (see risk.py's rest_travel_flags
+        # docstring for the numbers). Noted as context only.
+        base += " (divisional matchup)"
     if flags:
         base += ". Flags: " + "; ".join(flags)
     else:

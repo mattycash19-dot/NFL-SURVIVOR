@@ -83,36 +83,36 @@ def rest_travel_flags(plan_schedule):
     """
     Per (week, team) qualitative flags from data already in the schedule -
     no extra API calls. Returns {(week, team): [flag, ...]}.
+
+    Phase 3 (trap_games.py) tested divisional games, coming off a bye, and
+    facing a bye-rested opponent against 16 seasons of real results (8,322
+    team-games) and found NONE of them statistically distinguishable from
+    the market's own baseline expectation (divisional: exactly 0.000 mean
+    residual gap, and actually slightly LOWER variance than non-divisional
+    games - the opposite of the popular "division games are more volatile"
+    claim; both bye-related checks were within 1 SE of noise). Deliberately
+    NOT flagged here as a result - flagging something as a risk factor after
+    checking the data says it isn't one would be the same fabricated-
+    precision mistake this project has tried to avoid elsewhere. short_rest
+    and international/neutral-site below have NOT been run through the same
+    check yet (no clean historical baseline for "short week" specifically
+    built here) - flagged with that caveat, not asserted as proven.
     """
     flags = {}
     reg = plan_schedule.sort_values(["week"])
-    last_played_week = {}  # team -> last week they played (to detect "coming off bye")
 
     for wk in sorted(reg["week"].unique()):
         week_games = reg[reg["week"] == wk]
-        playing_this_week = set(week_games["home_team"]) | set(week_games["away_team"])
         for _, g in week_games.iterrows():
-            for team, rest_col, opp, opp_rest_col in [
-                (g["home_team"], "home_rest", g["away_team"], "away_rest"),
-                (g["away_team"], "away_rest", g["home_team"], "home_rest"),
-            ]:
+            for team, rest_col in [(g["home_team"], "home_rest"), (g["away_team"], "away_rest")]:
                 f = []
                 rest_days = g.get(rest_col)
                 if pd_notna(rest_days) and rest_days < SHORT_REST_DAYS:
-                    f.append(f"short rest ({int(rest_days)} days)")
+                    f.append(f"short rest ({int(rest_days)} days) - not yet Phase-3-validated")
                 if g.get("location") != "Home":
-                    f.append("international/neutral site")
-                if g.get("div_game"):
-                    f.append("divisional matchup")
-                if last_played_week.get(team) is not None and wk - last_played_week[team] > 1:
-                    f.append("coming off bye")
-                opp_last = last_played_week.get(opp)
-                if opp_last is not None and wk - opp_last > 1:
-                    f.append(f"opponent ({opp}) coming off bye")
+                    f.append("international/neutral site - not yet Phase-3-validated")
                 if f:
                     flags[(int(wk), team)] = f
-        for team in playing_this_week:
-            last_played_week[team] = wk
     return flags
 
 

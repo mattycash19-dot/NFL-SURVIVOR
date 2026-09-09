@@ -66,6 +66,8 @@ python optimizer.py     # just the optimizer, prints top 5 plans (Phase 1 rating
 python weather.py       # just this week's outdoor-game forecasts
 python injuries.py      # just this week's starting-QB injury flags
 python odds_data.py     # just the odds cross-check (prints "skipped" with no key configured)
+python calibration.py   # Phase 3: market vs. model calibration check against real history
+python trap_games.py    # Phase 3: tests letdown/lookahead/bye/divisional patterns against real history
 ```
 
 ## Data sources
@@ -102,8 +104,49 @@ precise multiplier without backtested evidence would be fabricated
 precision). Whether any of them deserve a quantified adjustment is exactly
 what Phase 3 is for.
 
-**Phase 3 (historical calibration, trap-game/letdown/lookahead detection):
-not built yet.**
+**Phase 3 (historical calibration, trap-game detection): done, and it found
+a real bug.**
+
+`calibration.py` checked whether "win probability" actually means what it
+claims, against real history:
+- **Market (devigged closing moneylines, 2010-2025, n=4,161 games): well
+  calibrated.** Brier score 0.211, predicted-vs-actual tracks closely
+  across every bucket up to 90-95%. The market cross-check in `risk.py`
+  can be trusted at face value.
+- **This project's own model: was badly overconfident.** The original
+  `fit_logistic()` fit b0/b1 against the SAME season the ratings were
+  computed from - which turned out to systematically overstate the
+  rating-to-win-probability relationship (a team's own EPA numbers in a
+  season are partly a *consequence* of that season's own wins). Checked
+  against real held-out seasons (2019-2025), predicted 80%+ buckets were
+  actually winning only ~65-67% of the time. **Fixed**: `ratings.py` now
+  uses `FITTED_B0`/`FITTED_B1`, fit genuinely out-of-sample by
+  `calibration.fit_out_of_sample_logistic()` (pooling shrunk prior-season
+  ratings against the *next* season's real outcomes across every
+  transition from 2010 through 2025). This closed most of the
+  overconfidence and is what `run_baseline.py`/`run_weekly.py` actually
+  use now - not a hypothetical, the season plan's own numbers changed
+  (survival probability dropped from an overconfident 2.78% to a more
+  honest 0.21% for the same Week 1 slate). Full details, the validation
+  numbers, and the honest remaining limitation (even fixed, a pure
+  preseason model still doesn't match the market's accuracy - Brier ~0.239
+  vs. 0.211 - rosters change too much year over year for last season's
+  play-by-play alone to fully capture) are in `ratings.py`'s `FITTED_B0`
+  docstring.
+
+`trap_games.py` tested the classic "trap game" narratives against 16
+seasons of real results (2010-2025, n=8,322 team-games) instead of just
+asserting them: letdown spots, lookahead spots, coming off a bye, facing a
+bye-rested opponent, and divisional-game volatility. **None showed a
+statistically distinguishable effect from the market's own baseline
+price** - divisional games in particular came back with *exactly* zero
+mean bias and slightly *lower* variance than non-divisional games, the
+opposite of the popular claim. Deliberately not wired into `risk.py` as
+flags as a result - flagging something as risk after checking the data
+says it isn't one would be the same fabricated-precision mistake this
+project has tried to avoid elsewhere. `short_rest` and
+`international/neutral-site` stay as flags but are explicitly labeled
+"not yet Phase-3-validated" rather than asserted as proven.
 
 ## Design notes / things deliberately not done yet
 
