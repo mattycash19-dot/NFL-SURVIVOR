@@ -13,6 +13,18 @@ a field of thousands that's a real second-order signal (see the vault's
 between already-comparable options - never a reason to take a worse team
 (field_model.py enforces the cap).
 
+IMPORTANT CAVEAT - this is NOT Circa-specific pick data. survivorgrid's
+consensus blends Yahoo, ESPN, and USA Football Pools entry data with
+PoolCrunch projections - all generic public survivor pools. Circa's actual
+field is sharper and more EV-conscious: sophisticated Circa players fade
+negative-EV chalk that recreational public pools pile onto, so real Circa
+popularity skews harder toward the genuinely-good picks and away from the
+"everyone takes the big name" chalk. This layer is therefore an
+APPROXIMATION of Circa's field using non-Circa behavior, stated plainly.
+It tested as inert for a single entry either way; if it's ever leaned on
+harder (multiple diversified entries), this gap matters and should be
+revisited with a real Circa-specific source if one becomes available.
+
 Degrades cleanly: any fetch/parse failure returns {} and logs a warning,
 same contract as odds_data / injuries - the pipeline still produces a plan.
 

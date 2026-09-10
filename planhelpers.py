@@ -148,6 +148,48 @@ def payout_blend_meta(pure_picks, blended_picks, true_matrix, weight, cap, field
     }
 
 
+def future_value_teams(matrix, plan_picks=None, min_legs=4, top_n=3):
+    """
+    "Future value" = teams that project as a top-`top_n` favorite in
+    `min_legs`+ of their remaining legs (weeks + Circa holiday legs). These
+    are the teams the optimizer should be *saving* for a low-opportunity-cost
+    spot rather than burning the first week they're the biggest favorite -
+    surfacing the list lets a human sanity-check the plan's resource timing
+    instead of trusting the solve blindly.
+
+    Computed from the win-probability matrix directly (no hardcoded team
+    list - it reflects this season's actual ratings). Returns a list of
+    {team, leg_count, legs, spent_at} dicts sorted by leg_count desc, where
+    `spent_at` is the leg this plan actually uses the team in (from
+    `plan_picks`, if given) or None.
+    """
+    spent = {}
+    if plan_picks:
+        spent = {team: slot for slot, team in plan_picks.items()}
+
+    counts = {}
+    where = {}
+    for label in matrix.index:
+        row = matrix.loc[label].dropna()
+        if row.empty:
+            continue
+        for team in row.sort_values(ascending=False).head(top_n).index:
+            counts[team] = counts.get(team, 0) + 1
+            where.setdefault(team, []).append(label)
+
+    out = []
+    for team, n in counts.items():
+        if n >= min_legs:
+            out.append({
+                "team": team,
+                "leg_count": n,
+                "legs": [str(x) for x in where[team]],
+                "spent_at": (str(spent[team]) if team in spent else None),
+            })
+    out.sort(key=lambda d: (-d["leg_count"], d["team"]))
+    return out
+
+
 def true_survival_prob(picks, matrix):
     """Product of the *true* (unblended) win probabilities across a plan's
     picks - what the plan's headline survival number should report even

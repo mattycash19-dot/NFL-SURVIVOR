@@ -160,6 +160,9 @@ details[open] summary::before { content:"\\25BE "; }
 .ratings .r b { margin-left:auto; font-variant-numeric:tabular-nums; }
 .byes { border-collapse:collapse; font-size:12.5px; }
 .byes td { padding:4px 12px 4px 0; border-bottom:1px solid var(--grid); }
+.fv { border-collapse:collapse; font-size:12.5px; margin-top:2px; }
+.fv td { padding:5px 16px 5px 0; border-bottom:1px solid var(--grid); color:var(--ink-2); }
+.fv td:first-child { color:var(--ink); }
 .note { color:var(--muted); font-size:12px; }
 """
 
@@ -301,7 +304,30 @@ def _unused_chips(top, all_teams, team_names):
             f'<div class="unused">{chips}</div>')
 
 
-def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=None, blend_meta=None):
+def _future_value_html(fv):
+    """Multi-leg favorites and where the plan spends each - lets you
+    sanity-check the resource timing instead of trusting the solve."""
+    if not fv:
+        return ""
+    rows = "".join(
+        f'<tr><td>{_logo(d["team"], "logo-xs")} <b>{d["team"]}</b></td>'
+        f'<td>top-3 favorite in <b>{d["leg_count"]}</b> legs</td>'
+        f'<td>{"plan spends it: <b>" + _label(_int_or_str(d["spent_at"])) + "</b>" if d.get("spent_at") else "not used in this plan"}</td></tr>'
+        for d in fv)
+    return (f'<h2>Future value &mdash; multi-leg favorites</h2>'
+            f'<p class="note">Teams that project as a top-3 favorite in 4+ of their remaining legs carry the most '
+            f'future value; the plan should be saving them for a low-cost spot, not spending them the first week '
+            f'they lead.</p><table class="fv">{rows}</table>')
+
+
+def _int_or_str(s):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return s
+
+
+def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=None, blend_meta=None, future_value=None):
     if not plans:
         return f'<div class="tab-panel{" active" if active else ""}" id="{pid}"><p class="note">No plan available.</p></div>'
     top = plans[0]
@@ -342,6 +368,7 @@ def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=
       <div class="callout">Probability of winning <b>every</b> pick: <b>{top['survival_prob']:.2%}</b>
         &middot; {len(top['detail'])} picks. <span class="sub">Click any box for the full slate and reasoning.</span></div>
       {_unused_chips(top, all_teams, team_names)}
+      {_future_value_html(future_value)}
       <h2>The Plan</h2>
       <div class="grid">{boxes}</div>
       <h2>Alternate Plans</h2>
@@ -371,7 +398,7 @@ def render(result, out_path=None):
         tabs = ('<button class="tab-btn active" data-target="p-circa">Circa Survivor</button>'
                 '<button class="tab-btn" data-target="p-normal">Normal Survivor</button>')
         circa = _panel("p-circa", circa_plans, schedule, team_names, all_teams, plan_week, active=True,
-                       legs=legs, blend_meta=result.get("payout_blend"))
+                       legs=legs, blend_meta=result.get("payout_blend"), future_value=result.get("future_value"))
         normal = _panel("p-normal", result["plans"], schedule, team_names, all_teams, plan_week, active=False)
     else:
         tabs = '<button class="tab-btn active" data-target="p-normal">Normal Survivor</button>'

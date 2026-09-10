@@ -273,6 +273,36 @@ def k_best_assignments(cost_matrix, k, forced=(), large=LARGE_COST):
     return results
 
 
+# Two plans whose total survival probability rounds equal to this many
+# decimals are treated as tied, and the tie is broken by expected legs
+# survived (front-loaded safety - see _expected_legs_survived). 5 decimals
+# ~= 0.001 percentage points; anything above that is a real difference in
+# the primary objective and is NOT overridden.
+_TIE_DECIMALS = 5
+
+
+def _expected_legs_survived(picks_in_order, win_prob_matrix):
+    """Sum over legs of the probability of surviving through that leg =
+    sum_i prod_{j<=i} p_j. For a fixed set of win probabilities on fixed
+    legs, this is maximized by taking the safest picks earliest - so among
+    plans that are otherwise tied on total survival probability, the higher
+    value here is the one that front-loads its safe picks (Circa pays
+    nothing for going deep without surviving to the end, so this is only
+    ever a tiebreaker, never the objective)."""
+    cum = 1.0
+    total = 0.0
+    for slot, team in picks_in_order:
+        try:
+            p = float(win_prob_matrix.loc[slot, team])
+        except (KeyError, TypeError):
+            p = 0.0
+        if not (p > 0):
+            p = 1e-9
+        cum *= p
+        total += cum
+    return total
+
+
 def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
     """
     High-level entry point. `locked`: dict {slot: team} for picks already
@@ -280,9 +310,12 @@ def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
     {row_label: float} to sort picks chronologically when the matrix has
     non-integer rows (Circa legs - see build_circa_matrix).
     Returns a list of dicts, best first:
-      {"picks": {slot: team, ...}, "survival_prob": float, "log_prob": float}
+      {"picks": {slot: team, ...}, "survival_prob": float, "log_prob": float,
+       "expected_legs_survived": float}
     survival_prob is the probability of winning every single picked game
-    (product across picks) - the actual quantity being maximized.
+    (product across picks) - the primary objective. Plans tied on that (to
+    `_TIE_DECIMALS`) are ordered by expected_legs_survived, i.e. the one
+    that uses its safest picks earliest wins the tie.
     """
     cost, weeks, teams = _prob_matrix_to_cost(win_prob_matrix)
     forced_pairs = []
@@ -297,14 +330,21 @@ def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
     for assignment, total_cost in raw:
         picks = {weeks[r]: teams[c] for r, c in assignment}
         if slot_order:
-            picks = dict(sorted(picks.items(), key=lambda kv: slot_order.get(kv[0], 1e9)))
+            ordered = sorted(picks.items(), key=lambda kv: slot_order.get(kv[0], 1e9))
         else:
-            picks = dict(sorted(picks.items()))
+            ordered = sorted(picks.items())
+        picks = dict(ordered)
         plans.append({
             "picks": picks,
             "survival_prob": float(np.exp(-total_cost)),
             "log_prob": float(-total_cost),
+            "expected_legs_survived": _expected_legs_survived(ordered, win_prob_matrix),
         })
+
+    # Tiebreak: keep the primary ranking, but where total survival
+    # probability rounds equal, prefer the plan that front-loads safety.
+    plans.sort(key=lambda pl: (round(pl["survival_prob"], _TIE_DECIMALS), pl["expected_legs_survived"]),
+               reverse=True)
     return plans
 
 

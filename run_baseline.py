@@ -105,6 +105,7 @@ def build_plan(n_alternates=5):
         "schedule": planhelpers.schedule_slate(circa_matrix, plan_schedule, legs),
         "popularity_meta": pop_meta,
         "payout_blend": blend_meta,
+        "future_value": planhelpers.future_value_teams(circa_matrix, circa_plans[0]["picks"]),
     }
     return result
 

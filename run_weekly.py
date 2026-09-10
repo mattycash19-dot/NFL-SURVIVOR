@@ -165,6 +165,7 @@ def build_weekly_plan(n_alternates=5):
         "injury_check_error": injury_err,
         "popularity_meta": pop_meta,
         "payout_blend": blend_meta,
+        "future_value": planhelpers.future_value_teams(adj_circa, circa_plans[0]["picks"]),
     }
     return result
 

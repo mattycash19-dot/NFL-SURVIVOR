@@ -197,10 +197,16 @@ top of win probability, never a replacement:
 
 - **`popularity.py`** - scrapes real current-week pick popularity from
   `survivorgrid.com/picks` (their consensus of Yahoo / ESPN / USA Football
-  Pools data). No WAF blocking (unlike ESPN's injuries endpoint); degrades
-  to "skip the adjustment" on any failure. Future legs, which have no
-  published data yet, use a chalk-seeking heuristic (share proportional to
-  `win_prob ** 3`).
+  Pools data + PoolCrunch projections). No WAF blocking (unlike ESPN's
+  injuries endpoint); degrades to "skip the adjustment" on any failure.
+  Future legs, which have no published data yet, use a chalk-seeking
+  heuristic (share proportional to `win_prob ** 3`).
+  **This is not Circa-specific pick data** - it's generic public-pool
+  behavior. Circa's real field is sharper and more EV-conscious (its
+  players fade negative-EV chalk that recreational pools pile onto), so
+  this is an honest approximation, not real Circa behavior. It tested
+  inert for one entry regardless; the gap would matter if the layer were
+  ever leaned on harder across multiple entries.
 - **`field_model.py`** - a season-long Monte Carlo of Circa field
   attrition. Each trajectory draws every remaining leg's game outcomes and
   multiplies the alive fraction by the share of the field that picked a
@@ -233,6 +239,31 @@ popularity display** - not a silent no-op, but honestly documented as
 changing nothing at safe settings. It would matter more across multiple
 diversified entries (Matt is starting with one) or if the published
 popularity data shifts hard against a solid team.
+
+## Transparency refinements (2026-09-10 strategy pass - none change today's picks)
+
+- **Future value, surfaced.** `planhelpers.future_value_teams()` lists the
+  teams that project as a top-3 favorite in 4+ of their remaining legs
+  (from the matrix, not a hardcoded list) and where the plan actually
+  spends each one - so the resource timing is checkable, not a black box.
+  2026 example: LA is a top-3 favorite in 8 legs and the plan burns it in
+  Week 7 (vs. a bottom-tier LV), a genuinely low-opportunity-cost spot.
+- **Expected-legs-survived tiebreaker.** `optimizer.top_plans()` still
+  ranks by total survival probability (Circa pays nothing for going deep
+  without surviving to the end). But among plans whose total rounds *equal*
+  (to `_TIE_DECIMALS` = 5 dp, ~0.001 pts), it now prefers the one that
+  front-loads its safest picks - `_expected_legs_survived`, which is
+  provably maximized by taking the safest picks earliest. Verified it never
+  lowers total probability, and today's top Circa plan is a unique optimum
+  so this is a no-op for the actual recommendation (`test_circa.py`).
+- **Holiday single-use scarcity, verified.** Six teams (BUF CHI DEN GB LA
+  PHI) are eligible for *both* the Thanksgiving and Christmas legs in 2026
+  but can only be used once. `test_circa.py` confirms the optimizer puts
+  each in its stronger holiday leg (or a regular week) and never leaves the
+  other leg with a below-median forced pick - e.g. BUF (62.7% Thanksgiving
+  vs. 44.4% Christmas) takes Thanksgiving, CHI takes Christmas.
+
+Run the verification: `python test_circa.py`.
 
 ## Design notes / things deliberately not done yet
 
