@@ -25,23 +25,33 @@ import nfl_data
 import ratings as ratings_mod
 import optimizer
 import planhelpers
+import popularity as pop_mod
+import field_model
 import dashboard
 
 
-def _attach_detail(plans, matrix, game_lookup, team_ratings):
+def _attach_detail(plans, true_matrix, game_lookup, team_ratings,
+                   popularity=None, ev_share=None, deltas=None):
+    popularity = popularity or {}
+    ev_share = ev_share or {}
+    deltas = deltas or {}
     for plan in plans:
         detail = {}
         for slot, team in plan["picks"].items():
             info = game_lookup.get((slot, team), {})
             detail[slot] = {
                 "team": team,
-                "win_prob": float(matrix.loc[slot, team]),
+                "win_prob": float(true_matrix.loc[slot, team]),
                 "opponent": info.get("opponent"),
                 "is_home": info.get("is_home"),
                 "div_game": info.get("div_game"),
                 "team_rating": float(team_ratings.get(team, float("nan"))),
+                "popularity": popularity.get(team),
+                "ev_share": ev_share.get((slot, team)),
+                "payout_delta": deltas.get((slot, team)),
             }
         plan["detail"] = detail
+        plan["survival_prob"] = planhelpers.true_survival_prob(plan["picks"], true_matrix)
     return plans
 
 
@@ -59,10 +69,25 @@ def build_plan(n_alternates=5):
     circa_matrix, slot_order = optimizer.append_circa_legs(matrix, legs, team_ratings, b0, b1)
     game_lookup = planhelpers.game_lookup(plan_schedule, legs)
 
-    normal_plans = _attach_detail(optimizer.top_plans(matrix, k=n_alternates), matrix, game_lookup, team_ratings)
+    # --- payout-share layer (Circa only; the private-pool Normal plan stays pure win-probability) ---
+    real_pop, pop_meta = pop_mod.fetch_current_popularity()
+    specs = planhelpers.build_leg_specs(circa_matrix, plan_schedule, legs, plan_week, real_pop)
+    ev_share, _p_win, field_after = field_model.simulate(specs)
+    deltas = field_model.blend_multipliers(ev_share, specs)
+    circa_blended = planhelpers.apply_payout_delta(circa_matrix, deltas)
+
+    circa_pure_top = optimizer.top_plans(circa_matrix, k=1, slot_order=slot_order)[0]["picks"]
+    circa_blended_plans = optimizer.top_plans(circa_blended, k=n_alternates, slot_order=slot_order)
+    blend_meta = planhelpers.payout_blend_meta(circa_pure_top, circa_blended_plans[0]["picks"], circa_matrix,
+                                               field_model.POPULARITY_BLEND_WEIGHT, field_model.POPULARITY_BLEND_CAP,
+                                               field_after, field_model.FIELD_SIZE)
+
+    normal_plans = _attach_detail(
+        optimizer.top_plans(matrix, k=n_alternates), matrix, game_lookup, team_ratings,
+        popularity=real_pop)
     circa_plans = _attach_detail(
-        optimizer.top_plans(circa_matrix, k=n_alternates, slot_order=slot_order),
-        circa_matrix, game_lookup, team_ratings)
+        circa_blended_plans, circa_matrix, game_lookup, team_ratings,
+        popularity=real_pop, ev_share=ev_share, deltas=deltas)
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -78,6 +103,8 @@ def build_plan(n_alternates=5):
         "circa_plans": circa_plans,
         "circa_legs": [{"leg": s["leg"], "dates": s["dates"], "week": s["week"]} for s in legs],
         "schedule": planhelpers.schedule_slate(circa_matrix, plan_schedule, legs),
+        "popularity_meta": pop_meta,
+        "payout_blend": blend_meta,
     }
     return result
 

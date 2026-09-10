@@ -82,6 +82,8 @@ python injuries.py      # just this week's starting-QB injury flags
 python odds_data.py     # just the odds cross-check (prints "skipped" with no key configured)
 python calibration.py   # Phase 3: market vs. model calibration check against real history
 python trap_games.py    # Phase 3: tests letdown/lookahead/bye/divisional patterns against real history
+python popularity.py    # current-week real pick popularity from survivorgrid.com
+python field_model.py   # (importable) Circa field-attrition Monte Carlo + payout-share scoring
 ```
 
 ## Data sources
@@ -93,6 +95,7 @@ python trap_games.py    # Phase 3: tests letdown/lookahead/bye/divisional patter
 | `api.weather.gov` (NWS) | Forecast for this week's outdoor US games | No - just a descriptive User-Agent header |
 | `site.api.espn.com` (unofficial) | League-wide injury reports, incl. starting QB status | No, but requires a `curl`-like User-Agent - see `injuries.py`'s header comment, ESPN's WAF blocks generic script/library User-Agents on this public endpoint |
 | The Odds API | Secondary market cross-check only | Yes, optional (see Setup) |
+| `survivorgrid.com/picks` | Real current-week survivor pick popularity (Circa payout-share layer) | No - scrapes cleanly, no UA workaround needed |
 
 ## Current status
 
@@ -161,6 +164,52 @@ says it isn't one would be the same fabricated-precision mistake this
 project has tried to avoid elsewhere. `short_rest` and
 `international/neutral-site` stay as flags but are explicitly labeled
 "not yet Phase-3-validated" rather than asserted as proven.
+
+## Payout-share / pick-popularity layer (Circa only) - built, and it moves nothing for one entry
+
+For the real-money **Circa** entry the pot splits equally among all
+surviving entries, so a correct pick *off* the popular team eliminates
+other entries and grows your share. This got built as a signal layered on
+top of win probability, never a replacement:
+
+- **`popularity.py`** - scrapes real current-week pick popularity from
+  `survivorgrid.com/picks` (their consensus of Yahoo / ESPN / USA Football
+  Pools data). No WAF blocking (unlike ESPN's injuries endpoint); degrades
+  to "skip the adjustment" on any failure. Future legs, which have no
+  published data yet, use a chalk-seeking heuristic (share proportional to
+  `win_prob ** 3`).
+- **`field_model.py`** - a season-long Monte Carlo of Circa field
+  attrition. Each trajectory draws every remaining leg's game outcomes and
+  multiplies the alive fraction by the share of the field that picked a
+  winner. `ev_share(team, leg)` = expected `1{team wins} / (1 + FIELD_SIZE
+  * field_alive_at_end)` - high when a team wins often *and* its winning
+  tends to coincide with a thinned field.
+- **The blend** turns `ev_share` into a win-probability delta capped at
+  **&plusmn;3 points** (`field_model.POPULARITY_BLEND_WEIGHT` /
+  `_CAP`), added before the optimizer re-solves the Circa plan. The
+  displayed win probability and survival probability stay the *true*
+  (unblended) numbers; popularity and the payout lean are shown separately
+  per pick.
+
+**Verified finding, stated plainly (same standard as the calibration and
+trap-game work): for a single entry, this changes zero picks.** At the
+intended weight it moved 0 of 20. It only starts moving picks at ~10x that
+weight - and even then most "changes" are the model swapping to a team
+that's *better* on win probability (i.e. resource re-timing, which the
+season-wide optimizer already does), not manufactured contrarianism.
+Genuine contrarian moves (giving up real win probability) only appear at
+weights far past anything the winner research supports. Why: (1) the
+global assignment solve already handles resource timing, which is what
+actually won Circa 2023-2025; (2) 65% of real winners' picks *were* the
+top-1/top-2 popular option - the optimizer's favorites are usually the
+popular picks anyway; (3) for 1 entry among ~15,000, the field-thinning
+gain from any one leg is smaller than the survival cost of a worse team.
+
+So the layer is kept as a **transparent, capped tiebreaker plus a useful
+popularity display** - not a silent no-op, but honestly documented as
+changing nothing at safe settings. It would matter more across multiple
+diversified entries (Matt is starting with one) or if the published
+popularity data shifts hard against a solid team.
 
 ## Design notes / things deliberately not done yet
 

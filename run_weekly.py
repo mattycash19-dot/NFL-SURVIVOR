@@ -23,6 +23,8 @@ import nfl_data
 import ratings as ratings_mod
 import optimizer
 import planhelpers
+import popularity as pop_mod
+import field_model
 import risk
 import picks_log
 import dashboard
@@ -60,7 +62,11 @@ def _reasoning(wk, team, opponent, is_home, div_game, win_prob, flags):
 
 
 def _assemble(plans, adjusted_matrix, base_matrix, game_lookup, team_ratings, plan_week,
-              injury_notes, rest_flags, weather_this_week, market_flags, locked_for_solve):
+              injury_notes, rest_flags, weather_this_week, market_flags, locked_for_solve,
+              popularity=None, ev_share=None, deltas=None):
+    popularity = popularity or {}
+    ev_share = ev_share or {}
+    deltas = deltas or {}
     for plan in plans:
         detail = {}
         for slot, team in plan["picks"].items():
@@ -82,8 +88,12 @@ def _assemble(plans, adjusted_matrix, base_matrix, game_lookup, team_ratings, pl
                 "reasoning": reasoning,
                 "locked": slot in locked_for_solve,
                 "holiday_slot": not isinstance(slot, int),
+                "popularity": popularity.get(team),
+                "ev_share": ev_share.get((slot, team)),
+                "payout_delta": deltas.get((slot, team)),
             }
         plan["detail"] = detail
+        plan["survival_prob"] = planhelpers.true_survival_prob(plan["picks"], adjusted_matrix)
     return plans
 
 
@@ -112,14 +122,29 @@ def build_weekly_plan(n_alternates=5):
     weather_this_week = risk.weather_flags(remaining_schedule, plan_week)
     market_flags = risk.market_cross_check(adj_weekly, remaining_schedule, nfl_data.TEAM_FULL_NAMES)
 
+    # --- payout-share layer: Circa only (the private-pool Normal plan stays pure win-probability) ---
+    real_pop, pop_meta = pop_mod.fetch_current_popularity()
+    specs = planhelpers.build_leg_specs(adj_circa, remaining_schedule, legs, plan_week, real_pop)
+    ev_share, _p_win, field_after = field_model.simulate(specs)
+    deltas = field_model.blend_multipliers(ev_share, specs)
+    circa_blended = planhelpers.apply_payout_delta(adj_circa, deltas)
+
+    circa_pure_top = optimizer.top_plans(adj_circa, k=1, locked=locked_for_solve, slot_order=slot_order)[0]["picks"]
+    circa_blended_plans = optimizer.top_plans(circa_blended, k=n_alternates, locked=locked_for_solve, slot_order=slot_order)
+    blend_meta = planhelpers.payout_blend_meta(circa_pure_top, circa_blended_plans[0]["picks"], adj_circa,
+                                               field_model.POPULARITY_BLEND_WEIGHT, field_model.POPULARITY_BLEND_CAP,
+                                               field_after, field_model.FIELD_SIZE)
+
     normal_plans = _assemble(
         optimizer.top_plans(adj_weekly, k=n_alternates, locked=locked_for_solve),
         adj_weekly, matrix, game_lookup, team_ratings, plan_week,
-        notes_w, rest_flags, weather_this_week, market_flags, locked_for_solve)
+        notes_w, rest_flags, weather_this_week, market_flags, locked_for_solve,
+        popularity=real_pop)
     circa_plans = _assemble(
-        optimizer.top_plans(adj_circa, k=n_alternates, locked=locked_for_solve, slot_order=slot_order),
+        circa_blended_plans,
         adj_circa, circa_matrix, game_lookup, team_ratings, plan_week,
-        notes_c, rest_flags, weather_this_week, market_flags, locked_for_solve)
+        notes_c, rest_flags, weather_this_week, market_flags, locked_for_solve,
+        popularity=real_pop, ev_share=ev_share, deltas=deltas)
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -137,6 +162,8 @@ def build_weekly_plan(n_alternates=5):
         "schedule": planhelpers.schedule_slate(circa_matrix, remaining_schedule, legs),
         "locked_picks": locked,
         "injury_check_error": injury_err,
+        "popularity_meta": pop_meta,
+        "payout_blend": blend_meta,
     }
     return result
 

@@ -116,6 +116,9 @@ h2 { font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.09em;
 .risk { font-size:11px; font-weight:600; background:var(--alarm-wash); color:var(--alarm);
         border-radius:5px; padding:2px 7px; }
 .reason { margin-top:7px; font-size:11.5px; color:var(--muted); }
+.metaline { margin-top:6px; display:flex; flex-wrap:wrap; gap:5px; }
+.mchip { font-size:11px; background:var(--surface-2); color:var(--ink-2); border-radius:5px; padding:2px 7px; }
+.mchip.lean { color:var(--leg); }
 
 details { margin:8px 0 6px; }
 summary { cursor:pointer; font-size:11.5px; color:var(--fill); list-style:none; padding:4px 0; }
@@ -225,6 +228,13 @@ def _card(slot, d, schedule, used_at, team_names, plan_week):
     reason_html = f'<div class="reason">{d["reason"]}</div>' if d.get("reason") else (
         f'<div class="reason">{d["reasoning"]}</div>' if d.get("reasoning") else "")
 
+    meta = []
+    if isinstance(d.get("popularity"), (int, float)):
+        meta.append(f'<span class="mchip">{d["popularity"]*100:.0f}% of pools pick {d["team"]}</span>')
+    if isinstance(d.get("payout_delta"), (int, float)) and abs(d["payout_delta"]) >= 0.001:
+        meta.append(f'<span class="mchip lean">{d["payout_delta"]*100:+.1f} pt payout-share lean</span>')
+    meta_html = f'<div class="metaline">{"".join(meta)}</div>' if meta else ""
+
     slate_rows = schedule.get(slot) or schedule.get(str(slot)) or []
     expander = ""
     if slate_rows:
@@ -242,7 +252,7 @@ def _card(slot, d, schedule, used_at, team_names, plan_week):
           <div class="meter"><span class="track"><i style="width:{max(2, p*100 if isinstance(p,(int,float)) else 0):.0f}%"></i></span>
             <span class="pct">{_pct(p)}</span></div>
           <div class="beat">to beat {_logo(d["opponent"], "logo-xs")} <b>{opp_full}</b>{where}{divtag}</div>
-          {chips_html}{reason_html}{expander}
+          {meta_html}{chips_html}{reason_html}{expander}
         </div>
       </div>
     </div>"""
@@ -269,7 +279,7 @@ def _unused_chips(top, all_teams, team_names):
             f'<div class="unused">{chips}</div>')
 
 
-def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=None):
+def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=None, blend_meta=None):
     if not plans:
         return f'<div class="tab-panel{" active" if active else ""}" id="{pid}"><p class="note">No plan available.</p></div>'
     top = plans[0]
@@ -281,11 +291,25 @@ def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=
         leg_note = (f'<div class="callout leg">Circa is 20 legs: the 18 weeks plus {spans} &mdash; '
                     f'each its own winning pick, no team reused across any of them.</div>')
 
+    blend_note = ""
+    if blend_meta:
+        fa = blend_meta.get("field_alive_after", {})
+        wk6 = next((v for k, v in fa.items() if k in ("6", "Week 6")), None)
+        thin = f" Field simulated to thin to ~{wk6*100:.0f}% alive by Week 6." if wk6 else ""
+        n = blend_meta.get("picks_changed", 0)
+        verdict = ("changed <b>no picks</b>" if n == 0 else
+                   f"changed <b>{n} pick(s)</b>, at most {blend_meta.get('max_winprob_sacrificed',0)*100:.1f} pt of win probability given up")
+        blend_note = (f'<div class="callout">Payout-share signal (pick popularity &times; field attrition, capped '
+                      f'&plusmn;{blend_meta.get("cap",0.03)*100:.0f} pts): at the current weight it {verdict}.'
+                      f'{thin} The season-wide optimizer already does the resource timing that actually wins Circa &mdash; '
+                      f'popularity is shown per pick as context, not forced.</div>')
+
     cards = "".join(_card(slot, d, schedule, used_at, team_names, plan_week) for slot, d in top["detail"].items())
     alts = "".join(_alt(p, top, i) for i, p in enumerate(plans[1:], 2))
     return f"""
     <div class="tab-panel{' active' if active else ''}" id="{pid}">
       {leg_note}
+      {blend_note}
       <div class="callout">Probability of winning <b>every</b> pick: <b>{top['survival_prob']:.2%}</b>
         &middot; {len(top['detail'])} picks.</div>
       {_unused_chips(top, all_teams, team_names)}
@@ -317,7 +341,8 @@ def render(result, out_path=None):
     circa = ""
     if circa_plans:
         tabs += '<button class="tab-btn" data-target="p-circa">Circa Survivor</button>'
-        circa = _panel("p-circa", circa_plans, schedule, team_names, all_teams, plan_week, active=False, legs=legs)
+        circa = _panel("p-circa", circa_plans, schedule, team_names, all_teams, plan_week, active=False,
+                       legs=legs, blend_meta=result.get("payout_blend"))
 
     ratings_html = "".join(
         f'<div class="r">{_logo(t, "logo-xs")} {t} <b>{v:+.2f}</b></div>'
