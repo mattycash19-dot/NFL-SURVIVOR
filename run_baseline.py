@@ -4,8 +4,9 @@ Phase 1 entry point: build the full-season baseline survivor plan.
 
 Run this once to get a season-long plan (before Week 1, or any time you
 want to regenerate the from-scratch baseline). For in-season use once picks
-have been made, Phase 2's run_weekly.py (not built yet) re-optimizes only
-the remaining weeks with locked-in picks held fixed.
+have been made, run_weekly.py re-optimizes only the remaining weeks with
+locked-in picks held fixed. Both produce a Normal and a Circa plan (see
+optimizer.CIRCA_SLOTS).
 
 Usage:
     python run_baseline.py [--alternates N]
@@ -26,45 +27,57 @@ import optimizer
 import dashboard
 
 
-def build_plan(n_alternates=5):
-    sched = nfl_data.fetch_schedule(force_refresh=True)
-    rating_season = nfl_data.latest_completed_season(sched)
-    plan_season, plan_week = nfl_data.current_season_and_week(sched)
+def _game_lookup(schedule_df, circa_slots):
+    """(row_label, team) -> {opponent, is_home, div_game}. row_label is an
+    int week for normal picks, or a Circa slot name for holiday picks."""
+    lut = {}
+    for _, g in schedule_df.iterrows():
+        wk, home, away, div = int(g["week"]), g["home_team"], g["away_team"], bool(g["div_game"])
+        lut[(wk, home)] = {"opponent": away, "is_home": True, "div_game": div}
+        lut[(wk, away)] = {"opponent": home, "is_home": False, "div_game": div}
+    for s in circa_slots:
+        for _, g in s["games"].iterrows():
+            home, away, div = g["home_team"], g["away_team"], bool(g["div_game"])
+            lut[(s["slot"], home)] = {"opponent": away, "is_home": True, "div_game": div}
+            lut[(s["slot"], away)] = {"opponent": home, "is_home": False, "div_game": div}
+    return lut
 
-    pbp = nfl_data.fetch_pbp(rating_season)
-    rating_input_schedule = nfl_data.season_schedule(sched, rating_season)
-    plan_schedule = nfl_data.season_schedule(sched, plan_season)
 
-    team_ratings, b0, b1 = ratings_mod.build_preseason_ratings(pbp, rating_input_schedule)
-    matrix = optimizer.build_win_prob_matrix(plan_schedule, team_ratings, b0, b1)
-    byes = nfl_data.compute_byes(plan_schedule)
-
-    plans = optimizer.top_plans(matrix, k=n_alternates)
-
-    # Per-pick detail (opponent, home/away, div game) for the top plan and
-    # each alternate, so the dashboard/CLI can show more than just the team
-    # name - this is the "reasoning" half of the output spec (the risk-flag
-    # half - injuries, weather, market cross-check - is Phase 2, once those
-    # data sources are wired in).
-    game_lookup = {}
-    for _, g in plan_schedule.iterrows():
-        wk, home, away = int(g["week"]), g["home_team"], g["away_team"]
-        game_lookup[(wk, home)] = {"opponent": away, "is_home": True, "div_game": bool(g["div_game"])}
-        game_lookup[(wk, away)] = {"opponent": home, "is_home": False, "div_game": bool(g["div_game"])}
-
+def _attach_detail(plans, matrix, game_lookup, team_ratings):
     for plan in plans:
         detail = {}
-        for wk, team in plan["picks"].items():
-            info = game_lookup.get((wk, team), {})
-            detail[wk] = {
+        for slot, team in plan["picks"].items():
+            info = game_lookup.get((slot, team), {})
+            detail[slot] = {
                 "team": team,
-                "win_prob": matrix.loc[wk, team],
+                "win_prob": float(matrix.loc[slot, team]),
                 "opponent": info.get("opponent"),
                 "is_home": info.get("is_home"),
                 "div_game": info.get("div_game"),
                 "team_rating": float(team_ratings.get(team, float("nan"))),
             }
         plan["detail"] = detail
+    return plans
+
+
+def build_plan(n_alternates=5):
+    sched = nfl_data.fetch_schedule(force_refresh=True)
+    rating_season = nfl_data.latest_completed_season(sched)
+    plan_season, plan_week = nfl_data.current_season_and_week(sched)
+
+    pbp = nfl_data.fetch_pbp(rating_season)
+    plan_schedule = nfl_data.season_schedule(sched, plan_season)
+
+    team_ratings, b0, b1 = ratings_mod.build_preseason_ratings(pbp)
+    matrix = optimizer.build_win_prob_matrix(plan_schedule, team_ratings, b0, b1)
+    circa_slots = optimizer.circa_holiday_slots(plan_schedule)
+    circa_matrix, slot_order = optimizer.append_circa_slots(matrix, circa_slots, team_ratings, b0, b1)
+    game_lookup = _game_lookup(plan_schedule, circa_slots)
+
+    normal_plans = _attach_detail(optimizer.top_plans(matrix, k=n_alternates), matrix, game_lookup, team_ratings)
+    circa_plans = _attach_detail(
+        optimizer.top_plans(circa_matrix, k=n_alternates, slot_order=slot_order),
+        circa_matrix, game_lookup, team_ratings)
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -73,9 +86,12 @@ def build_plan(n_alternates=5):
         "plan_week": plan_week,
         "home_field_logodds": b0,
         "rating_sensitivity": b1,
-        "byes": byes,
+        "byes": nfl_data.compute_byes(plan_schedule),
         "team_ratings": team_ratings.sort_values(ascending=False).round(4).to_dict(),
-        "plans": plans,
+        "team_names": nfl_data.TEAM_FULL_NAMES,
+        "plans": normal_plans,
+        "circa_plans": circa_plans,
+        "circa_slots": [{"slot": s["slot"], "date": s["date"], "week": s["week"]} for s in circa_slots],
     }
     return result
 
@@ -96,14 +112,19 @@ def main():
     html_path = dashboard.render(result)
     print(f"Wrote {html_path}")
 
-    top = result["plans"][0]
-    print(f"\nTop plan - survival probability: {top['survival_prob']:.2%}")
-    for wk, d in top["detail"].items():
-        loc = "vs" if d["is_home"] else "@"
-        div = " (div)" if d["div_game"] else ""
-        print(f"  Week {wk:>2}: {d['team']:<4} {loc} {d['opponent']:<4}{div}  {d['win_prob']:.1%}")
+    def _print_plan(plan, title):
+        print(f"\n{title} - survival probability: {plan['survival_prob']:.2%}")
+        for slot, d in plan["detail"].items():
+            label = f"Week {slot}" if isinstance(slot, int) else slot
+            loc = "vs" if d["is_home"] else "@"
+            div = " (div)" if d["div_game"] else ""
+            print(f"  {label:>16}: {d['team']:<4} {loc} {d['opponent']:<4}{div}  {d['win_prob']:.1%}")
 
-    print(f"\n{len(result['plans']) - 1} alternate plan(s) also in plan.json / dashboard.html.")
+    _print_plan(result["plans"][0], "Top NORMAL plan")
+    if result["circa_plans"]:
+        _print_plan(result["circa_plans"][0], "Top CIRCA plan (adds Thanksgiving Eve/Day, Black Friday, Christmas picks)")
+
+    print(f"\n{len(result['plans']) - 1} alternate plan(s) per mode also in plan.json / dashboard.html.")
     print("Open dashboard.html in a browser to see the full picture.")
 
 

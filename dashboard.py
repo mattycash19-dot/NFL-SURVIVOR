@@ -1,160 +1,281 @@
 """
-Renders plan.json (see run_baseline.py) into a single self-contained
-dashboard.html - no CDN dependencies, opens directly in a browser, same
-pattern as MLB Edge's dashboard.py.
+Renders a plan result (see run_baseline.py / run_weekly.py) into a single
+self-contained dashboard.html.
+
+Two tabs: Normal Survivor and Circa Survivor. Circa adds a separate winning
+pick for Thanksgiving Eve, Thanksgiving Day, Black Friday, and Christmas on
+top of the normal weekly pick (all from the same no-repeat team pool) - see
+optimizer.CIRCA_SLOTS. The Circa tab is only shown when circa plans are
+present in the result.
+
+Team logos are pulled from ESPN's public CDN
+(a.espncdn.com/i/teamlogos/nfl/500/<abbrev>.png) - fine here because this
+is a normal hosted page, not a sandboxed Claude artifact. Every logo has an
+onerror fallback and the team name is always shown as text next to it, so a
+missing image never breaks a card.
 """
 import os
 
+LOGO_URL = "https://a.espncdn.com/i/teamlogos/nfl/500/{}.png"
+
 CSS = """
 :root {
-  --bg: #0b0e14; --panel: #131826; --border: #232a3d;
-  --text: #e6e9f0; --muted: #8b93a7;
-  --good: #22c55e; --mid: #eab308; --bad: #ef4444; --accent: #60a5fa;
+  --bg:#0b0e14; --panel:#141a26; --panel-2:#1b2333; --border:#28324a;
+  --text:#eef1f7; --muted:#93a0b8; --faint:#5f6b83;
+  --accent:#5b9dff; --good:#31c76a; --mid:#e8b23b; --bad:#e8564a;
+  --holiday:#c07be0;
 }
-* { box-sizing: border-box; }
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:#f4f6fb; --panel:#ffffff; --panel-2:#f0f3f9; --border:#dde3ee;
+    --text:#141a26; --muted:#5a6784; --faint:#8b97ad;
+    --accent:#2f6fe0; --good:#1a9e50; --mid:#c98a12; --bad:#d13c30;
+    --holiday:#9a3fc0;
+  }
+}
+* { box-sizing:border-box; }
 body {
-  background: var(--bg); color: var(--text); margin: 0; padding: 32px;
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:var(--bg); color:var(--text); margin:0;
+  padding:28px 20px 60px;
+  font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  line-height:1.45;
 }
-h1 { font-size: 22px; margin: 0 0 4px; }
-h2 { font-size: 16px; color: var(--muted); font-weight: 600; margin: 32px 0 12px; text-transform: uppercase; letter-spacing: .04em; }
-.meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; }
-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 14px; }
-th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
-tr:last-child td { border-bottom: none; }
-.prob-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--accent); vertical-align: middle; margin-right: 8px; }
-.prob-cell { display: flex; align-items: center; gap: 8px; min-width: 140px; }
-.tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
-.tag-div { background: #3730a3; color: #c7d2fe; }
-.badge-top { background: var(--good); color: #06210e; font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.alt-summary { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
-.alt-picks { font-size: 13px; line-height: 1.7; }
-.diff { color: var(--accent); font-weight: 600; }
-.ratings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; font-size: 13px; }
-.ratings-grid div { padding: 4px 8px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
-.note { color: var(--muted); font-size: 13px; line-height: 1.6; }
-.reasoning { color: var(--muted); font-size: 12px; margin-top: 2px; }
-.flag { display: inline-block; background: #7c2d12; color: #fed7aa; font-size: 11px; padding: 1px 6px; border-radius: 4px; margin: 2px 4px 0 0; }
-.locked-badge { background: var(--accent); color: #06210e; font-weight: 700; padding: 1px 8px; border-radius: 4px; font-size: 11px; margin-left: 6px; }
+.wrap { max-width:820px; margin:0 auto; }
+h1 { font-size:22px; margin:0 0 4px; letter-spacing:-.01em; }
+.meta { color:var(--muted); font-size:12.5px; margin-bottom:20px; }
+h2 { font-size:13px; color:var(--muted); font-weight:700; letter-spacing:.08em;
+     text-transform:uppercase; margin:28px 0 12px; }
+
+.tabs { display:flex; gap:6px; margin-bottom:22px; border-bottom:1px solid var(--border); }
+.tab-btn {
+  appearance:none; background:none; border:none; cursor:pointer;
+  font:inherit; font-weight:600; font-size:14px; color:var(--muted);
+  padding:10px 14px; border-bottom:2px solid transparent; margin-bottom:-1px;
+}
+.tab-btn.active { color:var(--text); border-bottom-color:var(--accent); }
+.tab-panel { display:none; }
+.tab-panel.active { display:block; }
+
+.summary {
+  background:var(--panel-2); border:1px solid var(--border); border-radius:10px;
+  padding:12px 16px; font-size:13px; color:var(--muted); margin-bottom:16px;
+}
+.summary b { color:var(--text); }
+
+.card {
+  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  padding:14px 16px 14px 20px; margin-bottom:10px; position:relative; overflow:hidden;
+}
+.card::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:var(--stripe, var(--faint));
+}
+.card.holiday { border-color:color-mix(in srgb, var(--holiday) 45%, var(--border)); }
+.card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.slot { font-size:11.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+.slot.holiday { color:var(--holiday); }
+.badge {
+  font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  padding:2px 8px; border-radius:999px;
+}
+.badge.now { background:var(--accent); color:#fff; }
+.badge.locked { background:var(--good); color:#04240f; }
+
+.pick-row { display:flex; align-items:center; gap:14px; }
+.logo { width:46px; height:46px; object-fit:contain; flex-shrink:0; }
+.logo-sm { width:20px; height:20px; object-fit:contain; vertical-align:middle; }
+.logo-missing { display:none; }
+.pick-main { flex:1; min-width:0; }
+.pick-line { font-size:16px; font-weight:700; letter-spacing:-.01em; }
+.pick-line .verb { color:var(--muted); font-weight:600; font-size:13px; }
+.pick-line .team { font-size:18px; }
+.prob-wrap { display:flex; align-items:center; gap:10px; margin-top:6px; }
+.bar { flex:1; height:7px; border-radius:4px; background:var(--panel-2); overflow:hidden; max-width:260px; }
+.bar > span { display:block; height:100%; border-radius:4px; }
+.pct { font-variant-numeric:tabular-nums; font-weight:700; font-size:13.5px; min-width:46px; }
+.beat { margin-top:8px; font-size:13px; color:var(--muted); }
+.beat .opp { color:var(--text); font-weight:600; }
+.tag-div { font-size:10.5px; color:var(--faint); border:1px solid var(--border); border-radius:4px; padding:0 5px; margin-left:6px; }
+.flags { margin-top:9px; display:flex; flex-wrap:wrap; gap:5px; }
+.flag { font-size:11px; background:color-mix(in srgb, var(--bad) 16%, transparent);
+        color:var(--bad); border-radius:5px; padding:2px 7px; }
+.reasoning { margin-top:8px; font-size:12px; color:var(--faint); }
+
+.alt { background:var(--panel); border:1px solid var(--border); border-radius:10px;
+       padding:11px 15px; margin-bottom:8px; font-size:13px; }
+.alt .hd { color:var(--muted); margin-bottom:4px; }
+.alt .diff { color:var(--accent); font-weight:600; }
+
+.ratings { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:5px; }
+.ratings .r { display:flex; align-items:center; gap:6px; background:var(--panel);
+  border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12.5px; }
+.ratings .r b { margin-left:auto; font-variant-numeric:tabular-nums; }
+.byes { font-size:13px; }
+.byes tr td { padding:4px 10px 4px 0; border-bottom:1px solid var(--border); }
+.note { color:var(--muted); font-size:12.5px; }
+table { border-collapse:collapse; }
+"""
+
+JS = """
+document.querySelectorAll('.tab-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    var id = btn.dataset.target;
+    document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b===btn); });
+    document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.toggle('active', p.id===id); });
+  });
+});
 """
 
 
-def _prob_color(p):
-    if p >= 0.75:
-        return "var(--good)"
-    if p >= 0.60:
-        return "var(--mid)"
-    return "var(--bad)"
+def _stripe(p):
+    return "var(--good)" if p >= 0.72 else "var(--mid)" if p >= 0.60 else "var(--bad)"
 
 
-def _pick_row(wk, d):
+def _logo(abbrev, cls="logo"):
+    if not abbrev:
+        return ""
+    return (f'<img class="{cls}" src="{LOGO_URL.format(abbrev.lower())}" alt="{abbrev}" '
+            f'loading="lazy" onerror="this.classList.add(\'logo-missing\')">')
+
+
+def _slot_label(slot):
+    return f"Week {slot}" if isinstance(slot, int) else str(slot)
+
+
+def _pick_card(slot, d, team_names, plan_week):
     p = d["win_prob"]
-    loc = "vs" if d["is_home"] else "@"
-    div_tag = '<span class="tag tag-div">DIV</span>' if d["div_game"] else ""
-    locked_tag = '<span class="locked-badge">LOCKED</span>' if d.get("locked") else ""
-    bar_width = int(p * 100)
-    flags_html = "".join(f'<span class="flag">{f}</span>' for f in d.get("flags") or [])
+    is_holiday = d.get("holiday_slot") or not isinstance(slot, int)
+    team_full = team_names.get(d["team"], d["team"])
+    opp_full = team_names.get(d["opponent"], d["opponent"]) if d.get("opponent") else "?"
+
+    badges = ""
+    if d.get("locked"):
+        badges += '<span class="badge locked">Locked</span>'
+    elif slot == plan_week:
+        badges += '<span class="badge now">This week</span>'
+
+    div_tag = '<span class="tag-div">div</span>' if d.get("div_game") else ""
+    flags_html = ""
+    if d.get("flags"):
+        flags_html = '<div class="flags">' + "".join(f'<span class="flag">{f}</span>' for f in d["flags"]) + "</div>"
     reasoning_html = f'<div class="reasoning">{d["reasoning"]}</div>' if d.get("reasoning") else ""
+
     return f"""
-    <tr>
-      <td>Week {wk}</td>
-      <td>
-        <b>{d['team']}</b> {loc} {d['opponent']}{div_tag}{locked_tag}
-        {reasoning_html}
-        {flags_html}
-      </td>
-      <td>
-        <div class="prob-cell">
-          <span class="prob-bar" style="width:{bar_width}px; background:{_prob_color(p)};"></span>
-          {p:.1%}
+    <div class="card {'holiday' if is_holiday else ''}" style="--stripe:{_stripe(p)}">
+      <div class="card-top">
+        <span class="slot {'holiday' if is_holiday else ''}">{_slot_label(slot)}</span>
+        <span>{badges}</span>
+      </div>
+      <div class="pick-row">
+        {_logo(d["team"])}
+        <div class="pick-main">
+          <div class="pick-line"><span class="verb">PICK</span> <span class="team">{team_full}</span> <span class="verb">TO WIN</span></div>
+          <div class="prob-wrap">
+            <span class="bar"><span style="width:{p*100:.0f}%;background:{_stripe(p)}"></span></span>
+            <span class="pct">{p:.0%}</span>
+          </div>
+          <div class="beat">to beat {_logo(d["opponent"], "logo-sm")} <span class="opp">{opp_full}</span>{div_tag}
+            {"" if d.get("is_home") is None else (" &middot; at home" if d["is_home"] else " &middot; on the road")}</div>
+          {flags_html}
+          {reasoning_html}
         </div>
-      </td>
-      <td>{d['team_rating']:+.2f}</td>
-    </tr>"""
-
-
-def _plan_table(plan, label=None):
-    rows = "".join(_pick_row(wk, d) for wk, d in plan["detail"].items())
-    header = f'<span class="badge-top">{label}</span>' if label else ""
-    return f"""
-    <div class="panel">
-      <div class="alt-summary">{header} Survival probability across all {len(plan['detail'])} picks: <b>{plan['survival_prob']:.2%}</b></div>
-      <table>
-        <tr><th>Week</th><th>Pick</th><th>Win prob.</th><th>Rating</th></tr>
-        {rows}
-      </table>
+      </div>
     </div>"""
 
 
-def _alt_summary(plan, top_plan, idx):
+def _alt_block(plan, top_plan, idx):
     diffs = []
-    for wk, d in plan["detail"].items():
-        top_team = top_plan["detail"][wk]["team"]
+    for slot, d in plan["detail"].items():
+        top_team = top_plan["detail"].get(slot, {}).get("team")
         if d["team"] != top_team:
-            diffs.append(f"Wk{wk}: <span class='diff'>{d['team']}</span> (was {top_team})")
-    diff_str = ", ".join(diffs) if diffs else "identical to top plan"
+            diffs.append(f'{_slot_label(slot)}: <span class="diff">{d["team"]}</span> (was {top_team})')
+    body = ", ".join(diffs) if diffs else "identical to the top plan"
+    behind = (top_plan["survival_prob"] - plan["survival_prob"]) * 100
     return f"""
-    <div class="panel">
-      <div class="alt-summary">Alternate #{idx} - survival probability <b>{plan['survival_prob']:.2%}</b>
-        ({(top_plan['survival_prob'] - plan['survival_prob']) * 100:.2f} pts behind the top plan)</div>
-      <div class="alt-picks">Differs from top plan at: {diff_str}</div>
+    <div class="alt">
+      <div class="hd">Alternate #{idx} &middot; survival probability <b>{plan['survival_prob']:.2%}</b>
+        ({behind:.2f} pts behind top)</div>
+      <div>Differs at: {body}</div>
+    </div>"""
+
+
+def _panel(panel_id, plans, team_names, plan_week, active, circa_slots=None):
+    if not plans:
+        return f'<div class="tab-panel{" active" if active else ""}" id="{panel_id}"><p class="note">No plan available.</p></div>'
+    top = plans[0]
+    intro = ""
+    if circa_slots:
+        days = ", ".join(f"{s['slot']} ({s['date']})" for s in circa_slots)
+        intro = (f'<div class="summary">Circa adds a separate winning pick for: <b>{days}</b> &mdash; '
+                 f'each from a team not used anywhere else in the plan.</div>')
+    cards = "".join(_pick_card(slot, d, team_names, plan_week) for slot, d in top["detail"].items())
+    alts = "".join(_alt_block(p, top, i) for i, p in enumerate(plans[1:], 2))
+    return f"""
+    <div class="tab-panel{' active' if active else ''}" id="{panel_id}">
+      {intro}
+      <div class="summary">Full-plan survival probability (win every pick): <b>{top['survival_prob']:.2%}</b>
+        over {len(top['detail'])} picks.</div>
+      <h2>The Plan</h2>
+      {cards}
+      <h2>Alternate Plans</h2>
+      {alts or '<p class="note">No distinct alternates found.</p>'}
     </div>"""
 
 
 def render(result, out_path=None):
     out_path = out_path or os.path.join(os.path.dirname(__file__), "dashboard.html")
-    plans = result["plans"]
-    top = plans[0]
+    team_names = result.get("team_names", {})
+    plan_week = result.get("plan_week")
+    circa_plans = result.get("circa_plans") or []
+    circa_slots = result.get("circa_slots") or []
+
+    rating_bits = []
+    if "rating_season" in result:
+        rating_bits.append(f"ratings from {result['rating_season']} play-by-play")
+    if "inseason_weight" in result:
+        rating_bits.append(f"{result['inseason_weight']:.0%} current-season weight")
+    rating_bits.append(f"home-field {result['home_field_logodds']:.3f} log-odds")
+
+    tabs = '<button class="tab-btn active" data-target="panel-normal">Normal Survivor</button>'
+    normal_panel = _panel("panel-normal", result["plans"], team_names, plan_week, active=True)
+    circa_panel = ""
+    if circa_plans:
+        tabs += '<button class="tab-btn" data-target="panel-circa">Circa Survivor</button>'
+        circa_panel = _panel("panel-circa", circa_plans, team_names, plan_week, active=False, circa_slots=circa_slots)
 
     ratings_html = "".join(
-        f"<div>{team} <b>{val:+.2f}</b></div>"
-        for team, val in result["team_ratings"].items()
-    )
-
-    alt_html = "".join(_alt_summary(p, top, i) for i, p in enumerate(plans[1:], 2))
-
+        f'<div class="r">{_logo(t, "logo-sm")} {t} <b>{v:+.2f}</b></div>'
+        for t, v in result.get("team_ratings", {}).items())
     byes_html = "".join(
-        f"<tr><td>Week {wk}</td><td>{', '.join(teams) if teams else '-'}</td></tr>"
-        for wk, teams in sorted(result["byes"].items())
-        if teams
-    )
+        f"<tr><td>Week {wk}</td><td>{', '.join(teams)}</td></tr>"
+        for wk, teams in sorted(result.get("byes", {}).items()) if teams)
 
     html = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NFL Survivor Plan - {result['plan_season']}</title>
-<style>{CSS}</style></head><body>
-<h1>NFL Survivor Pool - Season {result['plan_season']} Plan</h1>
-<div class="meta">
-  Generated {result['generated_at']}
-  {f" &middot; ratings built from {result['rating_season']} season play-by-play" if 'rating_season' in result else ""}
-  {f" &middot; current-season weight in ratings: {result['inseason_weight']:.0%}" if 'inseason_weight' in result else ""}
-  &middot; home-field edge (fitted): {result['home_field_logodds']:.3f} log-odds
-  &middot; current week: {result['plan_week']}
-</div>
+<style>{CSS}</style></head><body><div class="wrap">
+<h1>NFL Survivor Pool &mdash; {result['plan_season']}</h1>
+<div class="meta">Generated {result['generated_at']} &middot; current week {plan_week} &middot; {' &middot; '.join(rating_bits)}</div>
 
-<h2>Top Plan</h2>
-{_plan_table(top, label="BEST")}
+<div class="tabs">{tabs}</div>
+{normal_panel}
+{circa_panel}
 
-<h2>Alternate Plans ({len(plans) - 1})</h2>
-{alt_html}
-
-<h2>Team Ratings ({result.get('rating_season', 'prior season + in-season')} EPA/success, regressed toward mean)</h2>
-<div class="panel"><div class="ratings-grid">{ratings_html}</div></div>
+<h2>Team Ratings (higher = stronger, regressed toward the mean)</h2>
+<div class="ratings">{ratings_html}</div>
 
 <h2>Bye Weeks</h2>
-<div class="panel"><table><tr><th>Week</th><th>Teams on bye</th></tr>{byes_html}</table></div>
+<table class="byes"><tbody>{byes_html}</tbody></table>
 
-<h2>About this plan</h2>
-<div class="panel note">
-  This is the Phase 1 baseline: one independent power-rating model (Elo-style,
-  fit on real outcomes, regressed toward the mean for the new season), solved
-  as a season-long assignment maximizing survival probability. It does not yet
-  include Phase 2 signals (in-season rating updates, market cross-check,
-  injury reports, rest/travel/weather, trap-game flags) - those reshuffle the
-  plan week to week once wired in. Only the current week's pick should ever
-  be treated as locked; everything else here is provisional.
+<h2>About</h2>
+<p class="note">Independent power-rating model (EPA/play + success rate, logistic win-probability
+fit validated out-of-sample &mdash; see the repo's <code>ratings.py</code> / <code>calibration.py</code>),
+solved as a season-long assignment that maximizes the probability of winning every pick. Only the
+current week's pick should be treated as locked; everything after is provisional and recomputed each run.
+Phase-3 calibration found this preseason model still trails the betting market's accuracy &mdash; treat
+early-season probabilities with real skepticism.</p>
 </div>
+<script>{JS}</script>
 </body></html>"""
 
     with open(out_path, "w", encoding="utf-8") as f:

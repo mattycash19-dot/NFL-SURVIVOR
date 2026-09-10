@@ -37,6 +37,80 @@ import ratings as ratings_mod
 
 LARGE_COST = 1e6
 
+# Circa Survivor requires a separate winning pick for each of these days on
+# top of the normal weekly pick, all drawing from the same no-repeat team
+# pool. The dates are derived from the actual schedule (Thanksgiving moves
+# week to week - it's Week 12 in 2026), not hardcoded. Which days count is
+# a documented assumption matching the four the pool's rules call out;
+# edit this tuple if the contest's slate differs.
+CIRCA_SLOTS = ("Thanksgiving Eve", "Thanksgiving Day", "Black Friday", "Christmas")
+_HOLIDAY_SUBORDER = {  # sort key offset so a holiday pick lands right after its own week
+    "Thanksgiving Eve": 0.1, "Thanksgiving Day": 0.2, "Black Friday": 0.3,
+    "Christmas Eve": 0.35, "Christmas": 0.4,
+}
+
+
+def circa_holiday_slots(season_df, which=CIRCA_SLOTS):
+    """
+    The Circa extra pick-slots present in `season_df`, as an ordered list of
+    {slot, date, week, games (DataFrame)}. Thanksgiving is identified as the
+    November Thursday carrying the most games (the 3-game slate); its eve and
+    Black Friday are the calendar days on either side. Christmas is Dec 25.
+    Slots with no games in this schedule (e.g. it's already past them) are
+    simply omitted.
+    """
+    df = season_df.copy()
+    df["_d"] = pd.to_datetime(df["gameday"])
+    out = []
+
+    nov_thu = df[(df["_d"].dt.month == 11) & (df["_d"].dt.weekday == 3)]
+    if not nov_thu.empty:
+        tg_date = nov_thu.groupby(nov_thu["_d"]).size().idxmax()
+        for name, delta in [("Thanksgiving Eve", -1), ("Thanksgiving Day", 0), ("Black Friday", 1)]:
+            if name not in which:
+                continue
+            day = tg_date + pd.Timedelta(days=delta)
+            games = df[df["_d"] == day]
+            if not games.empty:
+                out.append({"slot": name, "date": str(day.date()),
+                            "week": int(games["week"].iloc[0]), "games": games})
+
+    for name, (mo, dy) in [("Christmas Eve", (12, 24)), ("Christmas", (12, 25))]:
+        if name not in which:
+            continue
+        games = df[(df["_d"].dt.month == mo) & (df["_d"].dt.day == dy)]
+        if not games.empty:
+            out.append({"slot": name, "date": str(games["_d"].iloc[0].date()),
+                        "week": int(games["week"].iloc[0]), "games": games})
+
+    out.sort(key=lambda s: (s["week"], _HOLIDAY_SUBORDER.get(s["slot"], 0.5)))
+    return out
+
+
+def append_circa_slots(win_prob_matrix, slots, team_ratings, b0, b1):
+    """
+    Appends one row per Circa holiday slot (row label = the slot's display
+    name) to a weekly win-prob matrix. Returns (extended_matrix,
+    slot_order) - slot_order maps every row label, int weeks included, to a
+    float for chronological sorting so holiday picks interleave with the
+    right week.
+    """
+    ext = win_prob_matrix.copy()
+    order = {w: float(w) for w in win_prob_matrix.index}
+    for s in slots:
+        label = s["slot"]
+        row = pd.Series(index=ext.columns, dtype=float)
+        for _, g in s["games"].iterrows():
+            home, away = g["home_team"], g["away_team"]
+            if home not in team_ratings.index or away not in team_ratings.index:
+                continue
+            p_home = ratings_mod.win_probability(team_ratings[home], team_ratings[away], b0, b1)
+            row[home] = p_home
+            row[away] = 1.0 - p_home
+        ext.loc[label] = row
+        order[label] = s["week"] + _HOLIDAY_SUBORDER.get(label, 0.5)
+    return ext, order
+
 
 def build_win_prob_matrix(season_df, team_ratings, b0, b1):
     """
@@ -141,14 +215,16 @@ def k_best_assignments(cost_matrix, k, forced=(), large=LARGE_COST):
     return results
 
 
-def top_plans(win_prob_matrix, k=5, locked=None):
+def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
     """
-    High-level entry point. `locked`: dict {week: team} for picks already
-    made (Phase 2) - forced into every returned plan. Returns a list of
-    dicts, best first:
-      {"picks": {week: team, ...}, "survival_prob": float, "log_prob": float}
+    High-level entry point. `locked`: dict {slot: team} for picks already
+    made (Phase 2) - forced into every returned plan. `slot_order`: optional
+    {row_label: float} to sort picks chronologically when the matrix has
+    non-integer rows (Circa holiday slots - see append_circa_slots).
+    Returns a list of dicts, best first:
+      {"picks": {slot: team, ...}, "survival_prob": float, "log_prob": float}
     survival_prob is the probability of winning every single picked game
-    (product across weeks) - the actual quantity being maximized.
+    (product across picks) - the actual quantity being maximized.
     """
     cost, weeks, teams = _prob_matrix_to_cost(win_prob_matrix)
     forced_pairs = []
@@ -162,7 +238,10 @@ def top_plans(win_prob_matrix, k=5, locked=None):
     plans = []
     for assignment, total_cost in raw:
         picks = {weeks[r]: teams[c] for r, c in assignment}
-        picks = dict(sorted(picks.items()))
+        if slot_order:
+            picks = dict(sorted(picks.items(), key=lambda kv: slot_order.get(kv[0], 1e9)))
+        else:
+            picks = dict(sorted(picks.items()))
         plans.append({
             "picks": picks,
             "survival_prob": float(np.exp(-total_cost)),

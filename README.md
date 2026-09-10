@@ -59,6 +59,16 @@ Both write `plan.json` (structured plan data) and `dashboard.html` (open in
 a browser); `run_weekly.py` also prints the current week's recommendation
 with its risk flags and reasoning front and center.
 
+**Normal vs. Circa:** every run produces two plans, shown as tabs on the
+dashboard. *Normal* is one pick per week, 18 picks. *Circa* adds a separate
+winning pick for **Thanksgiving Eve, Thanksgiving Day, Black Friday, and
+Christmas** (Circa Survivor's extra required picks) on top of the weekly
+ones - 22 picks total, still no team reused anywhere. The holiday dates are
+derived from the schedule, not hardcoded (Thanksgiving is Week 12 in 2026).
+Which days count as Circa slots is set in `optimizer.CIRCA_SLOTS`. Known
+limitation: the QB-injury haircut applies to Circa holiday picks, but the
+rest/short-week/weather flags currently only annotate weekly picks.
+
 ```
 python nfl_data.py      # just the data pipeline, sanity-checks schedule/byes/pbp fetch
 python ratings.py       # just the rating model, prints the fitted coefficients + team rankings

@@ -58,6 +58,48 @@ def _reasoning(wk, team, opponent, is_home, div_game, win_prob, flags):
     return base
 
 
+def _game_lookup(schedule_df, circa_slots):
+    lut = {}
+    for _, g in schedule_df.iterrows():
+        wk, home, away, div = int(g["week"]), g["home_team"], g["away_team"], bool(g["div_game"])
+        lut[(wk, home)] = {"opponent": away, "is_home": True, "div_game": div}
+        lut[(wk, away)] = {"opponent": home, "is_home": False, "div_game": div}
+    for s in circa_slots:
+        for _, g in s["games"].iterrows():
+            home, away, div = g["home_team"], g["away_team"], bool(g["div_game"])
+            lut[(s["slot"], home)] = {"opponent": away, "is_home": True, "div_game": div}
+            lut[(s["slot"], away)] = {"opponent": home, "is_home": False, "div_game": div}
+    return lut
+
+
+def _assemble(plans, adjusted_matrix, base_matrix, game_lookup, team_ratings, plan_week,
+              injury_notes, rest_flags, weather_this_week, market_flags, locked_for_solve):
+    for plan in plans:
+        detail = {}
+        for slot, team in plan["picks"].items():
+            info = game_lookup.get((slot, team), {})
+            wx = weather_this_week if slot == plan_week else {}
+            flags = _flags_for_pick(slot, team, injury_notes, rest_flags, wx, market_flags)
+            base_p = base_matrix.loc[slot, team] if (slot in base_matrix.index and team in base_matrix.columns) \
+                else adjusted_matrix.loc[slot, team]
+            reasoning = _reasoning(slot, team, info.get("opponent"), info.get("is_home"),
+                                    info.get("div_game"), base_p, flags)
+            detail[slot] = {
+                "team": team,
+                "win_prob": float(adjusted_matrix.loc[slot, team]),
+                "opponent": info.get("opponent"),
+                "is_home": info.get("is_home"),
+                "div_game": info.get("div_game"),
+                "team_rating": float(team_ratings.get(team, float("nan"))),
+                "flags": flags,
+                "reasoning": reasoning,
+                "locked": slot in locked_for_solve,
+                "holiday_slot": not isinstance(slot, int),
+            }
+        plan["detail"] = detail
+    return plans
+
+
 def build_weekly_plan(n_alternates=5):
     sched = nfl_data.fetch_schedule(force_refresh=True)
     plan_season, plan_week = nfl_data.current_season_and_week(sched)
@@ -73,39 +115,24 @@ def build_weekly_plan(n_alternates=5):
     matrix = optimizer.build_win_prob_matrix(remaining_schedule, team_ratings, b0, b1)
     matrix = matrix.drop(columns=[t for t in used_before if t in matrix.columns])
 
-    adjusted_matrix, injury_notes, injury_err = risk.apply_qb_injury_adjustment(matrix, remaining_schedule)
+    circa_slots = optimizer.circa_holiday_slots(remaining_schedule)
+    circa_matrix, slot_order = optimizer.append_circa_slots(matrix, circa_slots, team_ratings, b0, b1)
+    game_lookup = _game_lookup(remaining_schedule, circa_slots)
+
+    adj_weekly, notes_w, injury_err = risk.apply_qb_injury_adjustment(matrix, remaining_schedule)
+    adj_circa, notes_c, _ = risk.apply_qb_injury_adjustment(circa_matrix, remaining_schedule, circa_slots)
     rest_flags = risk.rest_travel_flags(remaining_schedule)
     weather_this_week = risk.weather_flags(remaining_schedule, plan_week)
-    market_flags = risk.market_cross_check(adjusted_matrix, remaining_schedule, nfl_data.TEAM_FULL_NAMES)
+    market_flags = risk.market_cross_check(adj_weekly, remaining_schedule, nfl_data.TEAM_FULL_NAMES)
 
-    plans = optimizer.top_plans(adjusted_matrix, k=n_alternates, locked=locked_for_solve)
-
-    game_lookup = {}
-    for _, g in remaining_schedule.iterrows():
-        wk, home, away = int(g["week"]), g["home_team"], g["away_team"]
-        game_lookup[(wk, home)] = {"opponent": away, "is_home": True, "div_game": bool(g["div_game"])}
-        game_lookup[(wk, away)] = {"opponent": home, "is_home": False, "div_game": bool(g["div_game"])}
-
-    for plan in plans:
-        detail = {}
-        for wk, team in plan["picks"].items():
-            info = game_lookup.get((wk, team), {})
-            flags = _flags_for_pick(wk, team, injury_notes, rest_flags, weather_this_week if wk == plan_week else {}, market_flags)
-            reasoning = _reasoning(wk, team, info.get("opponent"), info.get("is_home"), info.get("div_game"),
-                                    matrix.loc[wk, team] if (wk in matrix.index and team in matrix.columns) else adjusted_matrix.loc[wk, team],
-                                    flags)
-            detail[wk] = {
-                "team": team,
-                "win_prob": adjusted_matrix.loc[wk, team],
-                "opponent": info.get("opponent"),
-                "is_home": info.get("is_home"),
-                "div_game": info.get("div_game"),
-                "team_rating": float(team_ratings.get(team, float("nan"))),
-                "flags": flags,
-                "reasoning": reasoning,
-                "locked": wk in locked_for_solve,
-            }
-        plan["detail"] = detail
+    normal_plans = _assemble(
+        optimizer.top_plans(adj_weekly, k=n_alternates, locked=locked_for_solve),
+        adj_weekly, matrix, game_lookup, team_ratings, plan_week,
+        notes_w, rest_flags, weather_this_week, market_flags, locked_for_solve)
+    circa_plans = _assemble(
+        optimizer.top_plans(adj_circa, k=n_alternates, locked=locked_for_solve, slot_order=slot_order),
+        adj_circa, circa_matrix, game_lookup, team_ratings, plan_week,
+        notes_c, rest_flags, weather_this_week, market_flags, locked_for_solve)
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -116,7 +143,10 @@ def build_weekly_plan(n_alternates=5):
         "inseason_weight": weight_current,
         "byes": nfl_data.compute_byes(plan_schedule),
         "team_ratings": team_ratings.sort_values(ascending=False).round(4).to_dict(),
-        "plans": plans,
+        "team_names": nfl_data.TEAM_FULL_NAMES,
+        "plans": normal_plans,
+        "circa_plans": circa_plans,
+        "circa_slots": [{"slot": s["slot"], "date": s["date"], "week": s["week"]} for s in circa_slots],
         "locked_picks": locked,
         "injury_check_error": injury_err,
     }
@@ -163,17 +193,25 @@ def main():
     html_path = dashboard.render(result)
 
     print(f"\nWrote {out_path}\nWrote {html_path}\n")
-    print(f"=== Week {plan_week} recommendation ===")
+    print(f"=== Week {plan_week} recommendation (NORMAL survivor) ===")
     d = top["detail"][plan_week]
-    print(f"  {d['team']} ({d['win_prob']:.1%}){'  [LOCKED]' if d['locked'] else ''}")
+    print(f"  PICK {d['team']} to beat {d['opponent']} - {d['win_prob']:.1%}{'  [LOCKED]' if d['locked'] else ''}")
     print(f"  {d['reasoning']}")
-    print(f"\nRest-of-season provisional plan (top of {len(result['plans'])}):")
-    for wk, dd in top["detail"].items():
-        if wk == plan_week:
-            continue
-        flag_str = f"  [{', '.join(dd['flags'])}]" if dd["flags"] else ""
-        print(f"  Week {wk:>2}: {dd['team']:<4} ({dd['win_prob']:.1%}){flag_str}")
-    print(f"\nSurvival probability, remaining season: {top['survival_prob']:.2%}")
+
+    def _print_rest(plan, title):
+        print(f"\n{title} (top of {len(result['plans'])}):")
+        for slot, dd in plan["detail"].items():
+            if slot == plan_week:
+                continue
+            label = f"Week {slot}" if isinstance(slot, int) else slot
+            flag_str = f"  [{', '.join(dd['flags'])}]" if dd["flags"] else ""
+            print(f"  {label:>16}: {dd['team']:<4} to beat {dd['opponent']:<4} ({dd['win_prob']:.1%}){flag_str}")
+        print(f"  -> survival probability, remaining season: {plan['survival_prob']:.2%}")
+
+    _print_rest(top, "Rest-of-season provisional plan, NORMAL")
+    if result.get("circa_plans"):
+        _print_rest(result["circa_plans"][0],
+                    "Rest-of-season provisional plan, CIRCA (adds Thanksgiving Eve/Day, Black Friday, Christmas)")
 
 
 if __name__ == "__main__":
