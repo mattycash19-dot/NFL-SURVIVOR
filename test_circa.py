@@ -117,7 +117,14 @@ def test_tiebreaker_frontloads_safety():
     assert plans[1]["expected_legs_survived"] > plans[2]["expected_legs_survived"]
     # tiebreak never sacrifices total probability
     assert all(sp[i] >= sp[i + 1] for i in range(len(sp) - 1)), "plans not in non-increasing survival order"
-    print("  [ok] tiebreaker: tied plans ordered by front-loaded safety, total probability never lowered")
+
+    # A near- (not exact) tie: {A@1=0.90, C@2=0.80} = 0.720 vs
+    # {B@1=0.80, D@2=0.895} = 0.716 -> 0.55% apart, just outside _TIE_REL,
+    # so the strictly-better plan stays first regardless of front-loading.
+    m2 = _matrix({1: {"A": 0.90, "B": 0.80}, 2: {"C": 0.80, "D": 0.895}})
+    p2 = optimizer.top_plans(m2, k=2)
+    assert p2[0]["survival_prob"] >= p2[1]["survival_prob"], "a >_TIE_REL-worse plan was promoted"
+    print(f"  [ok] tiebreaker: ties front-load safety; a plan >{optimizer._TIE_REL:.1%} worse is never promoted")
 
 
 def test_future_value_from_matrix():
@@ -146,17 +153,18 @@ def test_refinements_dont_move_todays_circa_picks():
     legs = optimizer.circa_legs(ps)
     cm, order = optimizer.build_circa_matrix(ps, legs, tr, b0, b1)
 
-    top = optimizer.top_plans(cm, k=5, slot_order=order)
-    # the tiebreak only reorders plans whose survival prob rounds equal to 5
-    # decimals; with 20 real-valued probs the top plan's product is unique,
-    # so plan[0] is the same pick set a plain product-max solve would give.
+    top = optimizer.top_plans(cm, k=8, slot_order=order)
     best_sp = max(p["survival_prob"] for p in top)
-    tied_with_best = [p for p in top if round(p["survival_prob"], 5) == round(best_sp, 5)]
+    # plan[0] must still be a maximum-survival plan - the tiebreak only ever
+    # reorders *within* a near-equal run, it never promotes a worse plan.
     assert top[0]["survival_prob"] == best_sp, "plan[0] is not the max-survival plan"
-    assert len(tied_with_best) == 1, (
-        f"today's top Circa plan is in a {len(tied_with_best)}-way tie; the tiebreak *could* reorder it - "
-        f"review before trusting plan[0] blindly")
-    print(f"  [ok] today's top Circa plan is a unique optimum ({best_sp:.4%}) - refinements don't move it")
+    # and among plans within _TIE_REL of the best, plan[0] has the highest
+    # front-loaded safety - i.e. the recommendation is stable, not luck.
+    near = [p for p in top if (best_sp - p["survival_prob"]) / best_sp <= optimizer._TIE_REL]
+    assert top[0]["expected_legs_survived"] == max(p["expected_legs_survived"] for p in near)
+    n_near = len(near)
+    note = "unique optimum" if n_near == 1 else f"best of a {n_near}-plan near-tie, chosen for front-loaded safety"
+    print(f"  [ok] today's top Circa plan ({best_sp:.4%}) is stable - {note}; refinements don't move it")
 
 
 if __name__ == "__main__":

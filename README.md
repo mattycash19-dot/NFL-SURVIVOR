@@ -250,12 +250,15 @@ popularity data shifts hard against a solid team.
   Week 7 (vs. a bottom-tier LV), a genuinely low-opportunity-cost spot.
 - **Expected-legs-survived tiebreaker.** `optimizer.top_plans()` still
   ranks by total survival probability (Circa pays nothing for going deep
-  without surviving to the end). But among plans whose total rounds *equal*
-  (to `_TIE_DECIMALS` = 5 dp, ~0.001 pts), it now prefers the one that
-  front-loads its safest picks - `_expected_legs_survived`, which is
-  provably maximized by taking the safest picks earliest. Verified it never
-  lowers total probability, and today's top Circa plan is a unique optimum
-  so this is a no-op for the actual recommendation (`test_circa.py`).
+  without surviving to the end). But within a run of plans all within
+  `_TIE_REL` = 0.5% *relative* of that run's leader (~0.0003 pts on a ~0.06%
+  season number - genuinely "essentially the same"), it prefers the one
+  that front-loads its safest picks - `_expected_legs_survived`, provably
+  maximized by taking the safest picks earliest. A plan more than 0.5%
+  worse is never promoted. Verified it never lowers total probability; for
+  today's 2026 slate the top Circa plan is the best of a 2-plan near-tie
+  and stays on top on front-loaded safety too, so the actual recommendation
+  is unchanged (`test_circa.py`).
 - **Holiday single-use scarcity, verified.** Six teams (BUF CHI DEN GB LA
   PHI) are eligible for *both* the Thanksgiving and Christmas legs in 2026
   but can only be used once. `test_circa.py` confirms the optimizer puts

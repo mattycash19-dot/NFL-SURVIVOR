@@ -273,12 +273,14 @@ def k_best_assignments(cost_matrix, k, forced=(), large=LARGE_COST):
     return results
 
 
-# Two plans whose total survival probability rounds equal to this many
-# decimals are treated as tied, and the tie is broken by expected legs
-# survived (front-loaded safety - see _expected_legs_survived). 5 decimals
-# ~= 0.001 percentage points; anything above that is a real difference in
-# the primary objective and is NOT overridden.
-_TIE_DECIMALS = 5
+# Plans whose total survival probability is within this *relative* fraction
+# of a near-equal run's leader are treated as tied, and the tie is broken
+# by expected legs survived (front-loaded safety - see
+# _expected_legs_survived). 0.5% relative of a ~0.06% season survival
+# probability is ~0.0003 percentage points - genuinely "essentially the
+# same". A plan more than this below the run leader is a real difference in
+# the primary objective and is never promoted above it.
+_TIE_REL = 0.005
 
 
 def _expected_legs_survived(picks_in_order, win_prob_matrix):
@@ -313,9 +315,10 @@ def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
       {"picks": {slot: team, ...}, "survival_prob": float, "log_prob": float,
        "expected_legs_survived": float}
     survival_prob is the probability of winning every single picked game
-    (product across picks) - the primary objective. Plans tied on that (to
-    `_TIE_DECIMALS`) are ordered by expected_legs_survived, i.e. the one
-    that uses its safest picks earliest wins the tie.
+    (product across picks) - the primary objective. Plans within `_TIE_REL`
+    relative of a near-equal run's leader are ordered by
+    expected_legs_survived, i.e. the one that uses its safest picks earliest
+    wins the tie; a plan more than `_TIE_REL` worse is never promoted.
     """
     cost, weeks, teams = _prob_matrix_to_cost(win_prob_matrix)
     forced_pairs = []
@@ -341,10 +344,20 @@ def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
             "expected_legs_survived": _expected_legs_survived(ordered, win_prob_matrix),
         })
 
-    # Tiebreak: keep the primary ranking, but where total survival
-    # probability rounds equal, prefer the plan that front-loads safety.
-    plans.sort(key=lambda pl: (round(pl["survival_prob"], _TIE_DECIMALS), pl["expected_legs_survived"]),
-               reverse=True)
+    # Tiebreak: primary order is by total survival probability; within each
+    # run of plans all within _TIE_REL relative of that run's leader, prefer
+    # the plan that front-loads its safest picks. A plan more than _TIE_REL
+    # below its run's leader keeps its strict probability rank - the primary
+    # objective is never overridden by more than a rounding error.
+    plans.sort(key=lambda pl: pl["survival_prob"], reverse=True)
+    i = 0
+    while i < len(plans):
+        lead = plans[i]["survival_prob"]
+        j = i + 1
+        while j < len(plans) and lead > 0 and (lead - plans[j]["survival_prob"]) / lead <= _TIE_REL:
+            j += 1
+        plans[i:j] = sorted(plans[i:j], key=lambda pl: pl["expected_legs_survived"], reverse=True)
+        i = j
     return plans
 
 
