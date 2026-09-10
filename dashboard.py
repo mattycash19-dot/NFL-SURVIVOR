@@ -50,7 +50,7 @@ body {
   font-family:system-ui,-apple-system,"Segoe UI",sans-serif; line-height:1.45;
   -webkit-font-smoothing:antialiased;
 }
-.wrap { max-width:780px; margin:0 auto; }
+.wrap { max-width:1060px; margin:0 auto; }
 h1 { font-size:21px; margin:0 0 3px; letter-spacing:-.01em; }
 .meta { color:var(--muted); font-size:12px; margin-bottom:20px; }
 h2 { font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.09em;
@@ -80,36 +80,50 @@ h2 { font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.09em;
   padding:3px 9px 3px 5px; color:var(--ink-2);
 }
 
-.card {
-  background:var(--surface); border:1px solid var(--hair); border-radius:12px;
-  padding:13px 15px 6px 17px; margin-bottom:9px; position:relative;
+/* ---- calendar grid of pick-boxes ---- */
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; margin-bottom:10px; }
+.box {
+  background:var(--surface); border:1px solid var(--hair); border-radius:11px;
+  position:relative; overflow:hidden; margin:0;
 }
-.card::before {
-  content:""; position:absolute; left:0; top:10px; bottom:10px; width:3px;
-  border-radius:3px; background:var(--stripe,transparent);
+.box > summary::before { content:none; }
+.box::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--hair);
 }
-.card.leg::before { background:var(--leg); }
-.card.alarm::before { background:var(--alarm); }
-.row1 { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:9px; }
-.slot { font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
-.slot.leg { color:var(--leg); }
-.pill { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
-        padding:2px 7px; border-radius:999px; }
-.pill.now { background:var(--fill); color:#fff; }
-.pill.locked { background:var(--ink); color:var(--surface); }
+.box.leg::before { background:var(--leg); }
+.box.alarm::before { background:var(--alarm); }
+.box > summary {
+  list-style:none; cursor:pointer; display:block; padding:9px 11px 10px 13px;
+}
+.box > summary::-webkit-details-marker { display:none; }
+.box > summary::after {
+  content:"\\25B8"; position:absolute; right:8px; top:8px; font-size:9px; color:var(--muted);
+}
+.box[open] { grid-column:1 / -1; border-color:var(--fill); }
+.box[open] > summary::after { content:"\\25BE"; }
+.b-label { font-size:10px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+.box.leg .b-label { color:var(--leg); }
+.b-team { display:flex; align-items:center; gap:7px; margin:5px 0 6px; font-size:15px; font-weight:800; letter-spacing:-.01em; }
+.b-team .logo { width:26px; height:26px; }
+.b-meter { display:flex; align-items:center; gap:7px; }
+.track { flex:1; height:6px; border-radius:4px; background:var(--fill-track); overflow:hidden; }
+.track > i { display:block; height:100%; background:var(--fill); border-radius:4px; }
+.pct { font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums; }
+.b-tags { margin-top:6px; font-size:10.5px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.b-tags .warn { color:var(--alarm); font-weight:700; }
+.b-tags .pill { font-size:9px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; padding:1px 6px; border-radius:999px; }
+.b-tags .pill.now { background:var(--fill); color:#fff; }
+.b-tags .pill.locked { background:var(--ink); color:var(--surface); }
 
-.pick { display:flex; align-items:center; gap:13px; }
-.logo { width:44px; height:44px; object-fit:contain; flex:0 0 auto; }
+.logo { object-fit:contain; flex:0 0 auto; }
 .logo-xs { width:18px; height:18px; object-fit:contain; vertical-align:middle; }
 .logo-missing { display:none; }
-.pick-body { flex:1; min-width:0; }
-.pick-name { font-size:15.5px; font-weight:700; letter-spacing:-.01em; }
-.pick-name .lead { font-size:11.5px; font-weight:700; color:var(--muted); letter-spacing:.06em; }
-.meter { display:flex; align-items:center; gap:9px; margin-top:6px; }
-.track { flex:1; max-width:240px; height:7px; border-radius:4px; background:var(--fill-track); overflow:hidden; }
-.track > i { display:block; height:100%; background:var(--fill); border-radius:4px; }
-.pct { font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; min-width:40px; }
-.beat { margin-top:7px; font-size:12.5px; color:var(--ink-2); }
+
+/* ---- expanded box detail ---- */
+.box-detail { padding:2px 13px 12px 13px; border-top:1px solid var(--grid); margin-top:2px; }
+.box-detail .full { font-size:13px; font-weight:700; margin:9px 0 3px; }
+.box-detail .full .lead { font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.06em; }
+.beat { font-size:12.5px; color:var(--ink-2); }
 .beat b { color:var(--ink); font-weight:600; }
 .beat .sub { color:var(--muted); }
 .chips { margin-top:8px; display:flex; flex-wrap:wrap; gap:5px; }
@@ -198,64 +212,72 @@ def _slate_table(rows, pick_team, used_at, this_label, team_names):
     return "".join(out)
 
 
-def _card(slot, d, schedule, used_at, team_names, plan_week):
+_LEG_SHORT = {"Thanksgiving / Black Friday": "THX / BF", "Christmas": "XMAS"}
+
+
+def _short_label(slot):
+    return f"Wk {slot}" if isinstance(slot, int) else _LEG_SHORT.get(str(slot), str(slot))
+
+
+def _box(slot, d, schedule, used_at, team_names, plan_week):
+    """One calendar cell: a compact <details> box whose summary is the
+    pick-at-a-glance and whose open state spans the row with the full
+    reasoning + game slate."""
     p = d["win_prob"]
     is_leg = d.get("holiday_slot") or not isinstance(slot, int)
     coinflip = isinstance(p, (int, float)) and p < 0.50
-    injury = any(f.lower().startswith("qb ") for f in (d.get("flags") or []))
+    flags = d.get("flags") or []
+    injury = any(f.lower().startswith("qb ") for f in flags)
     alarm = coinflip or injury
+    klass = "box" + (" leg" if is_leg else "") + (" alarm" if alarm else "")
 
-    klass = "card" + (" leg" if is_leg else "") + (" alarm" if alarm else "")
     team_full = team_names.get(d["team"], d["team"])
     opp_full = team_names.get(d["opponent"], d["opponent"]) if d.get("opponent") else "?"
-
-    pill = ""
-    if d.get("locked"):
-        pill = '<span class="pill locked">Locked</span>'
-    elif slot == plan_week:
-        pill = '<span class="pill now">This week</span>'
+    pill = ('<span class="pill locked">Locked</span>' if d.get("locked")
+            else '<span class="pill now">Now</span>' if slot == plan_week else "")
+    pop = d.get("popularity")
+    poptxt = f'<span>{pop*100:.0f}% picked</span>' if isinstance(pop, (int, float)) else ""
+    warn = '<span class="warn">&#9888;</span>' if (alarm or flags) else ""
+    bar_w = max(3, p * 100 if isinstance(p, (int, float)) else 0)
 
     where = "" if d.get("is_home") is None else (
         '<span class="sub"> &middot; at home</span>' if d["is_home"] else '<span class="sub"> &middot; on the road</span>')
     divtag = '<span class="sub"> &middot; divisional</span>' if d.get("div_game") else ""
-
     chips = []
     if coinflip:
-        chips.append('<span class="risk">⚠ under 50% &mdash; near coin flip</span>')
-    for f in (d.get("flags") or []):
-        chips.append(f'<span class="risk">⚠ {f}</span>')
+        chips.append('<span class="risk">&#9888; under 50% &mdash; near coin flip</span>')
+    for f in flags:
+        chips.append(f'<span class="risk">&#9888; {f}</span>')
     chips_html = f'<div class="chips">{"".join(chips)}</div>' if chips else ""
-    reason_html = f'<div class="reason">{d["reason"]}</div>' if d.get("reason") else (
-        f'<div class="reason">{d["reasoning"]}</div>' if d.get("reasoning") else "")
-
+    reason = d.get("reason") or d.get("reasoning")
+    reason_html = f'<div class="reason">{reason}</div>' if reason else ""
     meta = []
-    if isinstance(d.get("popularity"), (int, float)):
-        meta.append(f'<span class="mchip">{d["popularity"]*100:.0f}% of pools pick {d["team"]}</span>')
+    if isinstance(pop, (int, float)):
+        meta.append(f'<span class="mchip">{pop*100:.0f}% of pools pick {d["team"]}</span>')
     if isinstance(d.get("payout_delta"), (int, float)) and abs(d["payout_delta"]) >= 0.001:
         meta.append(f'<span class="mchip lean">{d["payout_delta"]*100:+.1f} pt payout-share lean</span>')
     meta_html = f'<div class="metaline">{"".join(meta)}</div>' if meta else ""
-
     slate_rows = schedule.get(slot) or schedule.get(str(slot)) or []
-    expander = ""
+    slate_html = ""
     if slate_rows:
-        expander = (
-            f'<details><summary>see all {len(slate_rows)} games &mdash; other picks available</summary>'
-            f'{_slate_table(slate_rows, d["team"], used_at, slot, team_names)}</details>')
+        slate_html = (f'<details><summary>see all {len(slate_rows)} games in this '
+                      f'{"leg" if is_leg else "week"}</summary>'
+                      f'{_slate_table(slate_rows, d["team"], used_at, slot, team_names)}</details>')
 
     return f"""
-    <div class="{klass}" style="--stripe:var(--hair)">
-      <div class="row1"><span class="slot {'leg' if is_leg else ''}">{_label(slot)}</span>{pill}</div>
-      <div class="pick">
-        {_logo(d["team"])}
-        <div class="pick-body">
-          <div class="pick-name"><span class="lead">PICK</span> {team_full} <span class="lead">TO WIN</span></div>
-          <div class="meter"><span class="track"><i style="width:{max(2, p*100 if isinstance(p,(int,float)) else 0):.0f}%"></i></span>
-            <span class="pct">{_pct(p)}</span></div>
-          <div class="beat">to beat {_logo(d["opponent"], "logo-xs")} <b>{opp_full}</b>{where}{divtag}</div>
-          {meta_html}{chips_html}{reason_html}{expander}
-        </div>
+    <details class="{klass}">
+      <summary>
+        <div class="b-label">{_short_label(slot)} {pill}</div>
+        <div class="b-team">{_logo(d["team"])}{d["team"]}</div>
+        <div class="b-meter"><span class="track"><i style="width:{bar_w:.0f}%"></i></span><span class="pct">{_pct(p)}</span></div>
+        <div class="b-tags">{poptxt}{warn}</div>
+      </summary>
+      <div class="box-detail">
+        <div class="full"><span class="lead">{_label(slot)} &mdash; PICK</span> {team_full} <span class="lead">TO WIN</span></div>
+        <div class="beat">to beat {_logo(d["opponent"], "logo-xs")} <b>{opp_full}</b>{where}{divtag}</div>
+        {meta_html}{chips_html}{reason_html}{slate_html}
       </div>
-    </div>"""
+    </details>"""
 
 
 def _alt(plan, top, idx):
@@ -311,17 +333,17 @@ def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=
                       f'{thin} The season-wide optimizer already does the resource timing that actually wins Circa &mdash; '
                       f'popularity is shown per pick as context, not forced.</div>')
 
-    cards = "".join(_card(slot, d, schedule, used_at, team_names, plan_week) for slot, d in top["detail"].items())
+    boxes = "".join(_box(slot, d, schedule, used_at, team_names, plan_week) for slot, d in top["detail"].items())
     alts = "".join(_alt(p, top, i) for i, p in enumerate(plans[1:], 2))
     return f"""
     <div class="tab-panel{' active' if active else ''}" id="{pid}">
       {leg_note}
       {blend_note}
       <div class="callout">Probability of winning <b>every</b> pick: <b>{top['survival_prob']:.2%}</b>
-        &middot; {len(top['detail'])} picks.</div>
+        &middot; {len(top['detail'])} picks. <span class="sub">Click any box for the full slate and reasoning.</span></div>
       {_unused_chips(top, all_teams, team_names)}
       <h2>The Plan</h2>
-      {cards}
+      <div class="grid">{boxes}</div>
       <h2>Alternate Plans</h2>
       {alts or '<p class="note">No distinct alternates found.</p>'}
     </div>"""
@@ -343,13 +365,18 @@ def render(result, out_path=None):
         bits.append(f"{result['inseason_weight']:.0%} current-season weight")
     bits.append(f"home-field {result['home_field_logodds']:.3f} log-odds")
 
-    tabs = '<button class="tab-btn active" data-target="p-normal">Normal Survivor</button>'
-    normal = _panel("p-normal", result["plans"], schedule, team_names, all_teams, plan_week, active=True)
-    circa = ""
-    if circa_plans:
-        tabs += '<button class="tab-btn" data-target="p-circa">Circa Survivor</button>'
-        circa = _panel("p-circa", circa_plans, schedule, team_names, all_teams, plan_week, active=False,
+    # Circa is the main tab (real-money entry); Normal (private pool) is secondary.
+    has_circa = bool(circa_plans)
+    if has_circa:
+        tabs = ('<button class="tab-btn active" data-target="p-circa">Circa Survivor</button>'
+                '<button class="tab-btn" data-target="p-normal">Normal Survivor</button>')
+        circa = _panel("p-circa", circa_plans, schedule, team_names, all_teams, plan_week, active=True,
                        legs=legs, blend_meta=result.get("payout_blend"))
+        normal = _panel("p-normal", result["plans"], schedule, team_names, all_teams, plan_week, active=False)
+    else:
+        tabs = '<button class="tab-btn active" data-target="p-normal">Normal Survivor</button>'
+        normal = _panel("p-normal", result["plans"], schedule, team_names, all_teams, plan_week, active=True)
+        circa = ""
 
     ratings_html = "".join(
         f'<div class="r">{_logo(t, "logo-xs")} {t} <b>{v:+.2f}</b></div>'
@@ -365,8 +392,8 @@ def render(result, out_path=None):
 <h1>NFL Survivor Pool &mdash; {result['plan_season']}</h1>
 <div class="meta">Generated {result['generated_at']} &middot; current week {plan_week} &middot; {' &middot; '.join(bits)}</div>
 <div class="tabs">{tabs}</div>
-{normal}
 {circa}
+{normal}
 <h2>Team Ratings (higher = stronger, regressed toward the mean)</h2>
 <div class="ratings">{ratings_html}</div>
 <h2>Bye Weeks</h2>
