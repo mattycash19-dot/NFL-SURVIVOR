@@ -33,9 +33,14 @@ def schedule_slate(matrix, schedule_df, legs=()):
     "see all games / other picks" expander.
     """
     slate = {}
+    holiday_ids = set()
+    for s in legs:
+        holiday_ids |= set(s["games"]["game_id"])
+
     for wk in sorted(schedule_df["week"].unique()):
         rows = []
-        wk_games = schedule_df[schedule_df["week"] == wk].sort_values("gameday")
+        wk_games = schedule_df[(schedule_df["week"] == wk)
+                               & ~schedule_df["game_id"].isin(holiday_ids)].sort_values("gameday")
         for _, g in wk_games.iterrows():
             away, home = g["away_team"], g["home_team"]
             rows.append({

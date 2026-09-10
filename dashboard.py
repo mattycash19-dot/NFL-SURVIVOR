@@ -287,9 +287,16 @@ def _panel(pid, plans, schedule, team_names, all_teams, plan_week, active, legs=
 
     leg_note = ""
     if legs:
-        spans = ", ".join(f'<b>{l["leg"]}</b> ({" & ".join(l["dates"])})' for l in legs)
-        leg_note = (f'<div class="callout leg">Circa is 20 legs: the 18 weeks plus {spans} &mdash; '
-                    f'each its own winning pick, no team reused across any of them.</div>')
+        spans = ", ".join(
+            "<b>{}</b> ({}&ndash;{}, {} days)".format(
+                l["leg"], l["dates"][0], l["dates"][-1][-2:], len(l.get("dates", [])))
+            for l in legs)
+        leg_note = (
+            '<div class="callout leg">Circa is 20 legs: the 18 NFL weeks plus ' + spans + '. '
+            "Each holiday leg is <b>one pick from its whole multi-day slate</b> (the pool spans every day "
+            "shown), no team reused anywhere. Holiday-leg deadlines fall <b>before any of the leg&rsquo;s "
+            "games kick off</b> (4pm PT Wed Nov 25 / Thu Dec 24); a postponed game not finished by "
+            "Wed 1:59am ET grades as a loss regardless of the score.</div>")
 
     blend_note = ""
     if blend_meta:

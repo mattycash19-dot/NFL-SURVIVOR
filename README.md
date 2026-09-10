@@ -60,18 +60,41 @@ a browser); `run_weekly.py` also prints the current week's recommendation
 with its risk flags and reasoning front and center.
 
 **Normal vs. Circa:** every run produces two plans, shown as tabs on the
-dashboard. *Normal* is one pick per week, 18 picks. *Circa Survivor's 2026
-structure is 20 legs* - the 18 NFL weeks plus a standalone **Thanksgiving /
-Black Friday** leg and a standalone **Christmas** leg, each its own
-no-repeat winning pick from that leg's whole multi-day slate (5 games /
-10 teams for Thanksgiving-BF, 4 games / 8 teams for Christmas this year).
-Leg dates are derived from the schedule, not hardcoded (Thanksgiving is
-Week 12 in 2026); `optimizer.CIRCA_LEGS` is the one place to edit if the
-contest slate changes. Each pick card on the dashboard has a "see all
-games" expander showing that week's / leg's full board with every team's
-win probability, so you can see what else you could pick. Known limitation:
-the QB-injury haircut applies to Circa leg picks, but the
-rest/short-week/weather flags currently only annotate weekly picks.
+dashboard. *Normal* is one pick per week, 18 picks.
+
+**Circa Survivor's 2026 structure is 20 legs** - the 18 NFL weeks plus a
+**combined Thanksgiving Eve / Thanksgiving Day / Black Friday** leg (ONE
+pick; the eligible pool spans all three days - 2026 has the first-ever
+standalone Thanksgiving Eve game, Packers @ Rams on Wed Nov 25, plus
+Thursday's tripleheader and the Black Friday game = 5 games / 10 teams)
+and a separate **Christmas** leg (Dec 24-25, 4 games / 8 teams). One
+no-repeat winning pick per leg.
+
+- **Contest-Week bucketing**, not nflverse week numbers. A Circa Contest
+  Week runs Wednesday 2:00 AM -> the following Wednesday 1:59 AM. nflverse
+  lumps the Thanksgiving Wed/Thu/Fri games into the same "Week 12" as that
+  weekend's Sunday games; Circa splits them. `optimizer.build_circa_matrix`
+  removes the holiday-leg games from the standard week rows and orders
+  every leg by its earliest real kickoff - so the Thanksgiving leg lands
+  between Week 11 and the (Sat-Tue) standard Week 12 leg, and the standard
+  Week 12 pick can only come from the Sun/Mon games.
+- **Deadlines (2026, confirmed vs. Circa's rules PDF + site):** standard
+  weeks due 4:00 PM PST Saturday or kickoff, whichever is earlier; the
+  combined Thanksgiving leg due **4:00 PM PST Wed Nov 25** (before that
+  night's Packers/Rams game even kicks off); the Christmas leg due
+  **4:00 PM PST Thu Dec 24**. The model doesn't submit picks - these are
+  on record for whoever does.
+- **Postponement rule:** Circa grades a pick a **loss** if its game is
+  postponed and unfinished by 1:59 AM ET Wednesday of that Contest Week,
+  regardless of who would have won. `risk.weather_flags` adds a documented
+  "postponement risk" flag (not a probability adjustment) when a pick's
+  game has a snow/ice/freezing forecast or 35+ mph wind - highest stakes
+  in the single-deadline holiday legs.
+- `optimizer.CIRCA_LEGS` is the one place to edit if the contest slate
+  changes. Each pick card on the dashboard has a "see all games" expander
+  showing that leg's full board with every team's win probability. Known
+  limitation: the QB-injury haircut applies to Circa leg picks, but the
+  rest/short-week/weather flags only annotate weekly (not leg) picks.
 
 ```
 python nfl_data.py      # just the data pipeline, sanity-checks schedule/byes/pbp fetch

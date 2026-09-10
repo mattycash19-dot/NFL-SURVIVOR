@@ -38,17 +38,33 @@ import ratings as ratings_mod
 LARGE_COST = 1e6
 
 # Circa Survivor's 2026 structure is 20 "legs": the 18 NFL weeks plus two
-# standalone selection events - a Thanksgiving / Black Friday leg and a
-# Christmas leg - each its own single life-or-death winning pick from that
-# leg's whole multi-day slate, with no team reused anywhere across the 20.
-# (Confirmed against Circa's official 2026 rules - see the project's vault
-# note.) Dates are derived from the schedule, not hardcoded (Thanksgiving is
-# Week 12 in 2026). Edit CIRCA_LEGS if the contest's slate changes.
+# standalone selection events - a COMBINED Thanksgiving Eve / Thanksgiving
+# Day / Black Friday leg (ONE pick, eligible pool spans all three days:
+# Wednesday's game - 2026 has the first-ever standalone Thanksgiving Eve
+# game, Packers @ Rams - plus Thursday's tripleheader and the Black Friday
+# game), and a Christmas leg (Dec 24-25). No team reused anywhere across
+# the 20. Confirmed against Circa's official 2026 rules PDF + Circa's site.
+#
+# Games are bucketed by Circa "Contest Week" boundaries (Wednesday 2:00 AM
+# through the following Wednesday 1:59 AM), NOT by nflverse's week numbers -
+# nflverse lumps the Thanksgiving Wed/Thu/Fri games into the same "week"
+# as that weekend's Sunday games, but Circa splits them: the Wed/Thu/Fri
+# games are the combined holiday leg, and the Sat-Tue games after are their
+# own standard leg. build_circa_matrix() removes the holiday-leg games from
+# the standard week rows and orders every leg by its earliest real
+# kickoff, so the interleaving is correct regardless of nflverse labels.
+#
+# Deadlines (2026, confirmed): standard weeks due 4:00 PM PST Saturday or
+# kickoff, whichever is earlier. Combined Thanksgiving leg due 4:00 PM PST
+# Wed Nov 25, 2026 - BEFORE the Wednesday night Packers/Rams game kicks off,
+# so the whole leg's pick is locked before any of its three days are
+# played. Christmas leg due 4:00 PM PST Thu Dec 24, 2026. (These are
+# operational facts for the human submitting picks - the model doesn't
+# submit anything - documented here so they're on record.)
 CIRCA_LEGS = (
     {"name": "Thanksgiving / Black Friday", "days": ("thanksgiving_eve", "thanksgiving", "black_friday")},
     {"name": "Christmas", "days": ("christmas_eve", "christmas")},
 )
-_LEG_SUBORDER = {"Thanksgiving / Black Friday": 0.5, "Christmas": 0.5}
 
 
 def _leg_day_dates(df):
@@ -68,15 +84,24 @@ def _leg_day_dates(df):
     }
 
 
+def _kickoff(df):
+    """A sortable kickoff timestamp per game (gameday + gametime; gametime
+    missing -> assume 13:00)."""
+    return pd.to_datetime(df["gameday"].astype(str) + " " + df["gametime"].fillna("13:00"),
+                          errors="coerce").fillna(pd.to_datetime(df["gameday"]))
+
+
 def circa_legs(season_df, legs=CIRCA_LEGS):
     """
-    The Circa standalone legs present in `season_df`, as an ordered list of
-    {leg, dates (list of str), week, games (DataFrame - every game across
-    the leg's days)}. A leg with no games in this schedule (already past)
-    is omitted.
+    The Circa standalone legs present in `season_df`, as a chronologically
+    ordered list of {leg, dates (list of str), week, earliest (int ns),
+    games (DataFrame - every game across the leg's days, Wed/Thu/Fri for
+    Thanksgiving)}. A leg with no games in this schedule (already past) is
+    omitted.
     """
     df = season_df.copy()
     df["_d"] = pd.to_datetime(df["gameday"])
+    df["_ko"] = _kickoff(df)
     day_dates = _leg_day_dates(df)
     out = []
     for leg in legs:
@@ -88,35 +113,61 @@ def circa_legs(season_df, legs=CIRCA_LEGS):
             "leg": leg["name"],
             "dates": sorted(str(d.date()) for d in games["_d"].unique()),
             "week": int(games["week"].min()),
-            "games": games.drop(columns=["_d"]),
+            "earliest": int(games["_ko"].min().value),
+            "games": games.drop(columns=["_d", "_ko"]),
         })
-    out.sort(key=lambda s: s["week"] + _LEG_SUBORDER.get(s["leg"], 0.5))
+    out.sort(key=lambda s: s["earliest"])
     return out
 
 
-def append_circa_legs(win_prob_matrix, legs, team_ratings, b0, b1):
+def build_circa_matrix(season_df, legs, team_ratings, b0, b1):
     """
-    Appends one row per Circa leg (row label = the leg's name) to a weekly
-    win-prob matrix - the row carries a win probability for every team
-    playing on any of that leg's days. Returns (extended_matrix,
-    slot_order); slot_order maps every row label, int weeks included, to a
-    float for chronological sorting.
+    The 20-leg Circa win-probability matrix: one row per NFL week with the
+    holiday-leg games REMOVED, plus one row per Circa leg carrying a win
+    probability for every team playing on any of that leg's days. Returns
+    (matrix, slot_order) - slot_order maps every row label (int week or leg
+    name) to its earliest kickoff (int ns) for correct chronological
+    interleaving (the Thanksgiving leg lands before the Sat-Tue standard
+    leg that shares its nflverse week number).
     """
-    ext = win_prob_matrix.copy()
-    order = {w: float(w) for w in win_prob_matrix.index}
-    for s in legs:
-        label = s["leg"]
-        row = pd.Series(index=ext.columns, dtype=float)
-        for _, g in s["games"].iterrows():
-            home, away = g["home_team"], g["away_team"]
-            if home not in team_ratings.index or away not in team_ratings.index:
+    df = season_df.copy()
+    df["_d"] = pd.to_datetime(df["gameday"])
+    df["_ko"] = _kickoff(df)
+
+    holiday_ids = set()
+    for lg in legs:
+        holiday_ids |= set(lg["games"]["game_id"])
+    weekly = df[~df["game_id"].isin(holiday_ids)]
+
+    teams = sorted(team_ratings.index)
+    weeks = sorted(int(w) for w in weekly["week"].unique())
+    mat = pd.DataFrame(index=weeks, columns=teams, dtype=float)
+    order = {}
+
+    for w in weeks:
+        wk = weekly[weekly["week"] == w]
+        order[w] = int(wk["_ko"].min().value)
+        for _, g in wk.iterrows():
+            h, a = g["home_team"], g["away_team"]
+            if h not in team_ratings.index or a not in team_ratings.index:
                 continue
-            p_home = ratings_mod.win_probability(team_ratings[home], team_ratings[away], b0, b1)
-            row[home] = p_home
-            row[away] = 1.0 - p_home
-        ext.loc[label] = row
-        order[label] = s["week"] + _LEG_SUBORDER.get(label, 0.5)
-    return ext, order
+            ph = ratings_mod.win_probability(team_ratings[h], team_ratings[a], b0, b1)
+            mat.loc[w, h] = ph
+            mat.loc[w, a] = 1.0 - ph
+
+    for lg in legs:
+        row = pd.Series(index=teams, dtype=float)
+        for _, g in lg["games"].iterrows():
+            h, a = g["home_team"], g["away_team"]
+            if h not in team_ratings.index or a not in team_ratings.index:
+                continue
+            ph = ratings_mod.win_probability(team_ratings[h], team_ratings[a], b0, b1)
+            row[h] = ph
+            row[a] = 1.0 - ph
+        mat.loc[lg["leg"]] = row
+        order[lg["leg"]] = lg["earliest"]
+
+    return mat, order
 
 
 def build_win_prob_matrix(season_df, team_ratings, b0, b1):
@@ -227,7 +278,7 @@ def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
     High-level entry point. `locked`: dict {slot: team} for picks already
     made (Phase 2) - forced into every returned plan. `slot_order`: optional
     {row_label: float} to sort picks chronologically when the matrix has
-    non-integer rows (Circa legs - see append_circa_legs).
+    non-integer rows (Circa legs - see build_circa_matrix).
     Returns a list of dicts, best first:
       {"picks": {slot: team, ...}, "survival_prob": float, "log_prob": float}
     survival_prob is the probability of winning every single picked game

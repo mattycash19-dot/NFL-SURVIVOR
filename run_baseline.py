@@ -66,7 +66,7 @@ def build_plan(n_alternates=5):
     team_ratings, b0, b1 = ratings_mod.build_preseason_ratings(pbp)
     matrix = optimizer.build_win_prob_matrix(plan_schedule, team_ratings, b0, b1)
     legs = optimizer.circa_legs(plan_schedule)
-    circa_matrix, slot_order = optimizer.append_circa_legs(matrix, legs, team_ratings, b0, b1)
+    circa_matrix, slot_order = optimizer.build_circa_matrix(plan_schedule, legs, team_ratings, b0, b1)
     game_lookup = planhelpers.game_lookup(plan_schedule, legs)
 
     # --- payout-share layer (Circa only; the private-pool Normal plan stays pure win-probability) ---

@@ -113,7 +113,8 @@ def build_weekly_plan(n_alternates=5):
     matrix = matrix.drop(columns=[t for t in used_before if t in matrix.columns])
 
     legs = optimizer.circa_legs(remaining_schedule)
-    circa_matrix, slot_order = optimizer.append_circa_legs(matrix, legs, team_ratings, b0, b1)
+    circa_matrix, slot_order = optimizer.build_circa_matrix(remaining_schedule, legs, team_ratings, b0, b1)
+    circa_matrix = circa_matrix.drop(columns=[t for t in used_before if t in circa_matrix.columns])
     game_lookup = planhelpers.game_lookup(remaining_schedule, legs)
 
     adj_weekly, notes_w, injury_err = risk.apply_qb_injury_adjustment(matrix, remaining_schedule)

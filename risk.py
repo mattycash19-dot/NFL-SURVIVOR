@@ -143,15 +143,27 @@ def weather_flags(plan_schedule, week):
             continue
         f = []
         precip = fc.get("precipitation_chance")
+        short = (fc.get("short_forecast") or "")
         if precip is not None and precip >= 50:
-            f.append(f"{precip}% precip chance ({fc['short_forecast']})")
+            f.append(f"{precip}% precip chance ({short})")
         wind = fc.get("wind", "")
         try:
             wind_mph = int("".join(c for c in wind.split()[0] if c.isdigit()))
             if wind_mph >= 20:
                 f.append(f"high wind ({wind})")
         except (ValueError, IndexError):
-            pass
+            wind_mph = 0
+
+        # Postponement risk (documented flag, not a probability adjustment -
+        # same standard as rest/travel/weather flags: real, stated plainly,
+        # not quantified without backtested evidence). Circa grades a pick a
+        # LOSS if its game is postponed and unfinished by 1:59 AM ET
+        # Wednesday of that Contest Week - regardless of who would have won -
+        # so severe winter weather on a pick is a real elimination risk,
+        # especially in the tight single-deadline holiday legs.
+        if any(t in short.lower() for t in ("snow", "ice", "blizzard", "freezing", "wintry")) or wind_mph >= 35:
+            f.append(f"postponement risk ({short or wind}) - a postponed game not finished by "
+                     f"Wed 1:59am ET grades as a loss in Circa")
         if f:
             flags[home] = f
             flags[g["away_team"]] = f  # affects both teams' game equally
