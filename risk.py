@@ -32,7 +32,7 @@ SHORT_REST_DAYS = 6         # < this many days since the team's last game
 BIG_MARKET_DISAGREEMENT = 0.08  # model vs. devigged market prob gap worth flagging
 
 
-def apply_qb_injury_adjustment(matrix, plan_schedule, circa_slots=()):
+def apply_qb_injury_adjustment(matrix, plan_schedule, circa_legs=()):
     """
     Checks EVERY remaining (week, team) cell in `matrix` against today's
     injury report and that game's scheduled starting QB - not just the
@@ -59,10 +59,10 @@ def apply_qb_injury_adjustment(matrix, plan_schedule, circa_slots=()):
         wk = int(g["week"])
         qb_lookup[(wk, g["home_team"])] = g.get("home_qb_name")
         qb_lookup[(wk, g["away_team"])] = g.get("away_qb_name")
-    for s in circa_slots:
+    for s in circa_legs:
         for _, g in s["games"].iterrows():
-            qb_lookup[(s["slot"], g["home_team"])] = g.get("home_qb_name")
-            qb_lookup[(s["slot"], g["away_team"])] = g.get("away_qb_name")
+            qb_lookup[(s["leg"], g["home_team"])] = g.get("home_qb_name")
+            qb_lookup[(s["leg"], g["away_team"])] = g.get("away_qb_name")
 
     for wk in adjusted.index:
         for team in adjusted.columns:

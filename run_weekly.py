@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import nfl_data
 import ratings as ratings_mod
 import optimizer
+import planhelpers
 import risk
 import picks_log
 import dashboard
@@ -56,20 +57,6 @@ def _reasoning(wk, team, opponent, is_home, div_game, win_prob, flags):
     else:
         base += ". No injury/rest/weather/market flags this run."
     return base
-
-
-def _game_lookup(schedule_df, circa_slots):
-    lut = {}
-    for _, g in schedule_df.iterrows():
-        wk, home, away, div = int(g["week"]), g["home_team"], g["away_team"], bool(g["div_game"])
-        lut[(wk, home)] = {"opponent": away, "is_home": True, "div_game": div}
-        lut[(wk, away)] = {"opponent": home, "is_home": False, "div_game": div}
-    for s in circa_slots:
-        for _, g in s["games"].iterrows():
-            home, away, div = g["home_team"], g["away_team"], bool(g["div_game"])
-            lut[(s["slot"], home)] = {"opponent": away, "is_home": True, "div_game": div}
-            lut[(s["slot"], away)] = {"opponent": home, "is_home": False, "div_game": div}
-    return lut
 
 
 def _assemble(plans, adjusted_matrix, base_matrix, game_lookup, team_ratings, plan_week,
@@ -115,12 +102,12 @@ def build_weekly_plan(n_alternates=5):
     matrix = optimizer.build_win_prob_matrix(remaining_schedule, team_ratings, b0, b1)
     matrix = matrix.drop(columns=[t for t in used_before if t in matrix.columns])
 
-    circa_slots = optimizer.circa_holiday_slots(remaining_schedule)
-    circa_matrix, slot_order = optimizer.append_circa_slots(matrix, circa_slots, team_ratings, b0, b1)
-    game_lookup = _game_lookup(remaining_schedule, circa_slots)
+    legs = optimizer.circa_legs(remaining_schedule)
+    circa_matrix, slot_order = optimizer.append_circa_legs(matrix, legs, team_ratings, b0, b1)
+    game_lookup = planhelpers.game_lookup(remaining_schedule, legs)
 
     adj_weekly, notes_w, injury_err = risk.apply_qb_injury_adjustment(matrix, remaining_schedule)
-    adj_circa, notes_c, _ = risk.apply_qb_injury_adjustment(circa_matrix, remaining_schedule, circa_slots)
+    adj_circa, notes_c, _ = risk.apply_qb_injury_adjustment(circa_matrix, remaining_schedule, legs)
     rest_flags = risk.rest_travel_flags(remaining_schedule)
     weather_this_week = risk.weather_flags(remaining_schedule, plan_week)
     market_flags = risk.market_cross_check(adj_weekly, remaining_schedule, nfl_data.TEAM_FULL_NAMES)
@@ -146,7 +133,8 @@ def build_weekly_plan(n_alternates=5):
         "team_names": nfl_data.TEAM_FULL_NAMES,
         "plans": normal_plans,
         "circa_plans": circa_plans,
-        "circa_slots": [{"slot": s["slot"], "date": s["date"], "week": s["week"]} for s in circa_slots],
+        "circa_legs": [{"leg": s["leg"], "dates": s["dates"], "week": s["week"]} for s in legs],
+        "schedule": planhelpers.schedule_slate(circa_matrix, remaining_schedule, legs),
         "locked_picks": locked,
         "injury_check_error": injury_err,
     }
@@ -211,7 +199,7 @@ def main():
     _print_rest(top, "Rest-of-season provisional plan, NORMAL")
     if result.get("circa_plans"):
         _print_rest(result["circa_plans"][0],
-                    "Rest-of-season provisional plan, CIRCA (adds Thanksgiving Eve/Day, Black Friday, Christmas)")
+                    "Rest-of-season provisional plan, CIRCA (20 legs: 18 weeks + Thanksgiving/Black Friday + Christmas)")
 
 
 if __name__ == "__main__":

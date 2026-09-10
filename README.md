@@ -60,13 +60,17 @@ a browser); `run_weekly.py` also prints the current week's recommendation
 with its risk flags and reasoning front and center.
 
 **Normal vs. Circa:** every run produces two plans, shown as tabs on the
-dashboard. *Normal* is one pick per week, 18 picks. *Circa* adds a separate
-winning pick for **Thanksgiving Eve, Thanksgiving Day, Black Friday, and
-Christmas** (Circa Survivor's extra required picks) on top of the weekly
-ones - 22 picks total, still no team reused anywhere. The holiday dates are
-derived from the schedule, not hardcoded (Thanksgiving is Week 12 in 2026).
-Which days count as Circa slots is set in `optimizer.CIRCA_SLOTS`. Known
-limitation: the QB-injury haircut applies to Circa holiday picks, but the
+dashboard. *Normal* is one pick per week, 18 picks. *Circa Survivor's 2026
+structure is 20 legs* - the 18 NFL weeks plus a standalone **Thanksgiving /
+Black Friday** leg and a standalone **Christmas** leg, each its own
+no-repeat winning pick from that leg's whole multi-day slate (5 games /
+10 teams for Thanksgiving-BF, 4 games / 8 teams for Christmas this year).
+Leg dates are derived from the schedule, not hardcoded (Thanksgiving is
+Week 12 in 2026); `optimizer.CIRCA_LEGS` is the one place to edit if the
+contest slate changes. Each pick card on the dashboard has a "see all
+games" expander showing that week's / leg's full board with every team's
+win probability, so you can see what else you could pick. Known limitation:
+the QB-injury haircut applies to Circa leg picks, but the
 rest/short-week/weather flags currently only annotate weekly picks.
 
 ```

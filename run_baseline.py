@@ -6,7 +6,7 @@ Run this once to get a season-long plan (before Week 1, or any time you
 want to regenerate the from-scratch baseline). For in-season use once picks
 have been made, run_weekly.py re-optimizes only the remaining weeks with
 locked-in picks held fixed. Both produce a Normal and a Circa plan (see
-optimizer.CIRCA_SLOTS).
+optimizer.CIRCA_LEGS).
 
 Usage:
     python run_baseline.py [--alternates N]
@@ -24,23 +24,8 @@ from datetime import datetime, timezone
 import nfl_data
 import ratings as ratings_mod
 import optimizer
+import planhelpers
 import dashboard
-
-
-def _game_lookup(schedule_df, circa_slots):
-    """(row_label, team) -> {opponent, is_home, div_game}. row_label is an
-    int week for normal picks, or a Circa slot name for holiday picks."""
-    lut = {}
-    for _, g in schedule_df.iterrows():
-        wk, home, away, div = int(g["week"]), g["home_team"], g["away_team"], bool(g["div_game"])
-        lut[(wk, home)] = {"opponent": away, "is_home": True, "div_game": div}
-        lut[(wk, away)] = {"opponent": home, "is_home": False, "div_game": div}
-    for s in circa_slots:
-        for _, g in s["games"].iterrows():
-            home, away, div = g["home_team"], g["away_team"], bool(g["div_game"])
-            lut[(s["slot"], home)] = {"opponent": away, "is_home": True, "div_game": div}
-            lut[(s["slot"], away)] = {"opponent": home, "is_home": False, "div_game": div}
-    return lut
 
 
 def _attach_detail(plans, matrix, game_lookup, team_ratings):
@@ -70,9 +55,9 @@ def build_plan(n_alternates=5):
 
     team_ratings, b0, b1 = ratings_mod.build_preseason_ratings(pbp)
     matrix = optimizer.build_win_prob_matrix(plan_schedule, team_ratings, b0, b1)
-    circa_slots = optimizer.circa_holiday_slots(plan_schedule)
-    circa_matrix, slot_order = optimizer.append_circa_slots(matrix, circa_slots, team_ratings, b0, b1)
-    game_lookup = _game_lookup(plan_schedule, circa_slots)
+    legs = optimizer.circa_legs(plan_schedule)
+    circa_matrix, slot_order = optimizer.append_circa_legs(matrix, legs, team_ratings, b0, b1)
+    game_lookup = planhelpers.game_lookup(plan_schedule, legs)
 
     normal_plans = _attach_detail(optimizer.top_plans(matrix, k=n_alternates), matrix, game_lookup, team_ratings)
     circa_plans = _attach_detail(
@@ -91,7 +76,8 @@ def build_plan(n_alternates=5):
         "team_names": nfl_data.TEAM_FULL_NAMES,
         "plans": normal_plans,
         "circa_plans": circa_plans,
-        "circa_slots": [{"slot": s["slot"], "date": s["date"], "week": s["week"]} for s in circa_slots],
+        "circa_legs": [{"leg": s["leg"], "dates": s["dates"], "week": s["week"]} for s in legs],
+        "schedule": planhelpers.schedule_slate(circa_matrix, plan_schedule, legs),
     }
     return result
 
@@ -122,7 +108,7 @@ def main():
 
     _print_plan(result["plans"][0], "Top NORMAL plan")
     if result["circa_plans"]:
-        _print_plan(result["circa_plans"][0], "Top CIRCA plan (adds Thanksgiving Eve/Day, Black Friday, Christmas picks)")
+        _print_plan(result["circa_plans"][0], "Top CIRCA plan (20 legs: 18 weeks + Thanksgiving/Black Friday + Christmas)")
 
     print(f"\n{len(result['plans']) - 1} alternate plan(s) per mode also in plan.json / dashboard.html.")
     print("Open dashboard.html in a browser to see the full picture.")

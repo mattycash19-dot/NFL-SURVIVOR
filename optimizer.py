@@ -37,68 +37,75 @@ import ratings as ratings_mod
 
 LARGE_COST = 1e6
 
-# Circa Survivor requires a separate winning pick for each of these days on
-# top of the normal weekly pick, all drawing from the same no-repeat team
-# pool. The dates are derived from the actual schedule (Thanksgiving moves
-# week to week - it's Week 12 in 2026), not hardcoded. Which days count is
-# a documented assumption matching the four the pool's rules call out;
-# edit this tuple if the contest's slate differs.
-CIRCA_SLOTS = ("Thanksgiving Eve", "Thanksgiving Day", "Black Friday", "Christmas")
-_HOLIDAY_SUBORDER = {  # sort key offset so a holiday pick lands right after its own week
-    "Thanksgiving Eve": 0.1, "Thanksgiving Day": 0.2, "Black Friday": 0.3,
-    "Christmas Eve": 0.35, "Christmas": 0.4,
-}
+# Circa Survivor's 2026 structure is 20 "legs": the 18 NFL weeks plus two
+# standalone selection events - a Thanksgiving / Black Friday leg and a
+# Christmas leg - each its own single life-or-death winning pick from that
+# leg's whole multi-day slate, with no team reused anywhere across the 20.
+# (Confirmed against Circa's official 2026 rules - see the project's vault
+# note.) Dates are derived from the schedule, not hardcoded (Thanksgiving is
+# Week 12 in 2026). Edit CIRCA_LEGS if the contest's slate changes.
+CIRCA_LEGS = (
+    {"name": "Thanksgiving / Black Friday", "days": ("thanksgiving_eve", "thanksgiving", "black_friday")},
+    {"name": "Christmas", "days": ("christmas_eve", "christmas")},
+)
+_LEG_SUBORDER = {"Thanksgiving / Black Friday": 0.5, "Christmas": 0.5}
 
 
-def circa_holiday_slots(season_df, which=CIRCA_SLOTS):
+def _leg_day_dates(df):
+    """Resolve each named holiday day to an actual date present in `df`
+    (a schedule with a parsed `_d` column). Thanksgiving = the November
+    Thursday carrying the most games; its eve/Friday are the days on either
+    side. Christmas = Dec 25, its eve = Dec 24. Missing days -> None."""
+    nov_thu = df[(df["_d"].dt.month == 11) & (df["_d"].dt.weekday == 3)]
+    tg = nov_thu.groupby(nov_thu["_d"]).size().idxmax() if not nov_thu.empty else None
+    xmas = pd.Timestamp(year=int(df["_d"].dt.year.mode().iloc[0]), month=12, day=25)
+    return {
+        "thanksgiving_eve": tg - pd.Timedelta(days=1) if tg is not None else None,
+        "thanksgiving": tg,
+        "black_friday": tg + pd.Timedelta(days=1) if tg is not None else None,
+        "christmas_eve": xmas - pd.Timedelta(days=1),
+        "christmas": xmas,
+    }
+
+
+def circa_legs(season_df, legs=CIRCA_LEGS):
     """
-    The Circa extra pick-slots present in `season_df`, as an ordered list of
-    {slot, date, week, games (DataFrame)}. Thanksgiving is identified as the
-    November Thursday carrying the most games (the 3-game slate); its eve and
-    Black Friday are the calendar days on either side. Christmas is Dec 25.
-    Slots with no games in this schedule (e.g. it's already past them) are
-    simply omitted.
+    The Circa standalone legs present in `season_df`, as an ordered list of
+    {leg, dates (list of str), week, games (DataFrame - every game across
+    the leg's days)}. A leg with no games in this schedule (already past)
+    is omitted.
     """
     df = season_df.copy()
     df["_d"] = pd.to_datetime(df["gameday"])
+    day_dates = _leg_day_dates(df)
     out = []
-
-    nov_thu = df[(df["_d"].dt.month == 11) & (df["_d"].dt.weekday == 3)]
-    if not nov_thu.empty:
-        tg_date = nov_thu.groupby(nov_thu["_d"]).size().idxmax()
-        for name, delta in [("Thanksgiving Eve", -1), ("Thanksgiving Day", 0), ("Black Friday", 1)]:
-            if name not in which:
-                continue
-            day = tg_date + pd.Timedelta(days=delta)
-            games = df[df["_d"] == day]
-            if not games.empty:
-                out.append({"slot": name, "date": str(day.date()),
-                            "week": int(games["week"].iloc[0]), "games": games})
-
-    for name, (mo, dy) in [("Christmas Eve", (12, 24)), ("Christmas", (12, 25))]:
-        if name not in which:
+    for leg in legs:
+        wanted = [day_dates[d] for d in leg["days"] if day_dates.get(d) is not None]
+        games = df[df["_d"].isin(wanted)]
+        if games.empty:
             continue
-        games = df[(df["_d"].dt.month == mo) & (df["_d"].dt.day == dy)]
-        if not games.empty:
-            out.append({"slot": name, "date": str(games["_d"].iloc[0].date()),
-                        "week": int(games["week"].iloc[0]), "games": games})
-
-    out.sort(key=lambda s: (s["week"], _HOLIDAY_SUBORDER.get(s["slot"], 0.5)))
+        out.append({
+            "leg": leg["name"],
+            "dates": sorted(str(d.date()) for d in games["_d"].unique()),
+            "week": int(games["week"].min()),
+            "games": games.drop(columns=["_d"]),
+        })
+    out.sort(key=lambda s: s["week"] + _LEG_SUBORDER.get(s["leg"], 0.5))
     return out
 
 
-def append_circa_slots(win_prob_matrix, slots, team_ratings, b0, b1):
+def append_circa_legs(win_prob_matrix, legs, team_ratings, b0, b1):
     """
-    Appends one row per Circa holiday slot (row label = the slot's display
-    name) to a weekly win-prob matrix. Returns (extended_matrix,
-    slot_order) - slot_order maps every row label, int weeks included, to a
-    float for chronological sorting so holiday picks interleave with the
-    right week.
+    Appends one row per Circa leg (row label = the leg's name) to a weekly
+    win-prob matrix - the row carries a win probability for every team
+    playing on any of that leg's days. Returns (extended_matrix,
+    slot_order); slot_order maps every row label, int weeks included, to a
+    float for chronological sorting.
     """
     ext = win_prob_matrix.copy()
     order = {w: float(w) for w in win_prob_matrix.index}
-    for s in slots:
-        label = s["slot"]
+    for s in legs:
+        label = s["leg"]
         row = pd.Series(index=ext.columns, dtype=float)
         for _, g in s["games"].iterrows():
             home, away = g["home_team"], g["away_team"]
@@ -108,7 +115,7 @@ def append_circa_slots(win_prob_matrix, slots, team_ratings, b0, b1):
             row[home] = p_home
             row[away] = 1.0 - p_home
         ext.loc[label] = row
-        order[label] = s["week"] + _HOLIDAY_SUBORDER.get(label, 0.5)
+        order[label] = s["week"] + _LEG_SUBORDER.get(label, 0.5)
     return ext, order
 
 
@@ -220,7 +227,7 @@ def top_plans(win_prob_matrix, k=5, locked=None, slot_order=None):
     High-level entry point. `locked`: dict {slot: team} for picks already
     made (Phase 2) - forced into every returned plan. `slot_order`: optional
     {row_label: float} to sort picks chronologically when the matrix has
-    non-integer rows (Circa holiday slots - see append_circa_slots).
+    non-integer rows (Circa legs - see append_circa_legs).
     Returns a list of dicts, best first:
       {"picks": {slot: team, ...}, "survival_prob": float, "log_prob": float}
     survival_prob is the probability of winning every single picked game
