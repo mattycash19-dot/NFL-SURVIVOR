@@ -60,23 +60,34 @@ PRESEASON_SHRINKAGE = 0.72  # fraction of last season's rating gap from the mean
 # predicted 80%+ buckets actually won only ~65-67% of the time. These two
 # constants instead come from calibration.fit_out_of_sample_logistic(),
 # pooling (shrunk prior-season rating gap, actual NEXT-season outcome)
-# pairs across every available season transition (2010->2011 through
-# 2024->2025, n=3601 games) - genuinely out-of-sample by construction.
-# Held-out validation (fit on 2010-2017, tested on 2019-2025, kept
-# separate from the production fit below): Brier 0.2408 -> 0.2388, and the
-# worst overconfidence band (80-90% predicted, ~65% actual) closed up
-# substantially. Still an honest, real limitation worth stating plainly:
-# even properly calibrated, a pure preseason EPA-only rating has limited
-# power to predict a DIFFERENT season on its own (Brier ~0.239 vs. the
-# market's 0.211 over the same kind of test - see calibration.py) -
-# rosters change materially year over year in ways last season's play-by-
-# play alone can't see. Trust these preseason/Week-1 numbers with real
-# skepticism; build_inseason_ratings() should get better as current-season
-# data comes in and starts dominating the blend. Re-run
-# calibration.fit_out_of_sample_logistic() periodically as more seasons of
-# history accumulate rather than treating these as permanent.
-FITTED_B0 = 0.2203
-FITTED_B1 = 0.4589
+# pairs across season transitions - genuinely out-of-sample by construction.
+# Held-out validation (fit on an earlier window, tested on 2019-2025):
+# Brier 0.2408 -> 0.2388, and the worst overconfidence band (80-90%
+# predicted, ~65% actual) closed up substantially.
+#
+# 2026-09-10: dropped the pre-2016 transitions from the fit. The 2010-2015
+# NFL had a genuinely larger home-field advantage (raw home win rate 56.7%
+# for 2010-2019 vs 53.4% since 2020), and including it pulled b0 up to an
+# even-matchup home win probability of ~55.5% - toward the high end of the
+# modern game. Refit on 2016->2017 through 2024->2025 (n=2327): b0 0.2203
+# -> 0.1722 (even-matchup home win prob ~54.3%), b1 0.4589 -> 0.4712.
+# Held-out check on 2020-2025 (1,610 games): Brier 0.2382 -> 0.2380, and
+# the 50-60% buckets (where most games and most survivor picks live)
+# tightened - production predicted 57.3% / actual 55.4%; the recent fit
+# predicts 57.4% / actual 56.9%. No bucket got worse.
+#
+# Still an honest, real limitation worth stating plainly: even properly
+# calibrated, a pure preseason EPA-only rating has limited power to predict
+# a DIFFERENT season on its own (Brier ~0.238 vs. the market's ~0.211 over
+# the same kind of test - see calibration.py) - rosters change materially
+# year over year in ways last season's play-by-play alone can't see. Trust
+# these preseason/Week-1 numbers with real skepticism; build_inseason_
+# ratings() should get better as current-season data starts dominating the
+# blend. Re-run calibration.fit_out_of_sample_logistic() periodically as
+# more seasons accumulate; keep the ~10-season trailing window so the fit
+# tracks the current game rather than averaging in a different era.
+FITTED_B0 = 0.1722
+FITTED_B1 = 0.4712
 
 
 def team_epa_success(pbp_df):

@@ -162,15 +162,20 @@ claims, against real history:
   actually winning only ~65-67% of the time. **Fixed**: `ratings.py` now
   uses `FITTED_B0`/`FITTED_B1`, fit genuinely out-of-sample by
   `calibration.fit_out_of_sample_logistic()` (pooling shrunk prior-season
-  ratings against the *next* season's real outcomes across every
-  transition from 2010 through 2025). This closed most of the
-  overconfidence and is what `run_baseline.py`/`run_weekly.py` actually
-  use now - not a hypothetical, the season plan's own numbers changed
-  (survival probability dropped from an overconfident 2.78% to a more
-  honest 0.21% for the same Week 1 slate). Full details, the validation
+  ratings against the *next* season's real outcomes across a ~10-season
+  trailing window - **2016->2017 through 2024->2025 as of 2026-09-10**,
+  after the 2010-2015 transitions were dropped: that era's larger
+  home-field advantage was pulling the model's even-matchup home win
+  probability up to ~55.5%, vs. ~54.3% on the recent window, and the
+  recent fit calibrates marginally better on held-out 2020-2025 games).
+  This is what `run_baseline.py`/`run_weekly.py` actually use - not a
+  hypothetical, the season plan's own numbers changed (the original
+  in-sample fit had survival probability at an overconfident 2.78%; the
+  first out-of-sample fit and then the HFA recalibration brought it to a
+  more honest ~0.06% for the Circa slate). Full details, the validation
   numbers, and the honest remaining limitation (even fixed, a pure
-  preseason model still doesn't match the market's accuracy - Brier ~0.239
-  vs. 0.211 - rosters change too much year over year for last season's
+  preseason model still doesn't match the market's accuracy - Brier ~0.238
+  vs. ~0.211 - rosters change too much year over year for last season's
   play-by-play alone to fully capture) are in `ratings.py`'s `FITTED_B0`
   docstring.
 
